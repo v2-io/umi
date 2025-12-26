@@ -1,0 +1,25 @@
+#!/usr/bin/env ruby
+# Outputs to stdout and stderr in random order
+# Usage: interleaved [count]
+# Outputs count lines split randomly between stdout/stderr
+
+count = (ARGV[0] || 10).to_i
+$stdout.sync = true
+$stderr.sync = true
+
+count.times do |i|
+  sleep rand * 0.05
+
+  msg = "line #{i + 1}"
+  if rand < 0.5
+    puts "stdout: #{msg}"
+  else
+    $stderr.puts "stderr: #{msg}"
+  end
+
+  # Sometimes emit both
+  if rand < 0.2
+    puts "stdout: #{msg} (bonus)"
+    $stderr.puts "stderr: #{msg} (bonus)"
+  end
+end

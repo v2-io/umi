@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+# Reads only N lines then exits, leaving stdin data behind
+# Usage: partial-reader [count]
+# Tests what happens when process doesn't consume all input
+
+count = (ARGV[0] || 1).to_i
+$stdout.sync = true
+$stderr.sync = true
+
+count.times do |i|
+  line = $stdin.gets
+  break unless line
+  sleep rand * 0.02
+  puts "read[#{i + 1}]: #{line}"
+end
+
+# Random exit code
+code = rand < 0.8 ? 0 : rand(1..5)
+$stderr.puts "partial-reader exiting (code #{code}), may have left data in stdin"
+sleep rand * 0.1
+exit code

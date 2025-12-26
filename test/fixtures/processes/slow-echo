@@ -1,0 +1,13 @@
+#!/usr/bin/env ruby
+# Echo with variable delay - base delay plus random jitter
+# Usage: slow-echo [base_delay]
+# Actual delay: base +/- 50%
+
+base = (ARGV[0] || 0.3).to_f
+$stdout.sync = true
+
+while line = $stdin.gets
+  jitter = base * (rand - 0.5)  # -50% to +50%
+  sleep [0.01, base + jitter].max
+  puts line
+end

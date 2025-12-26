@@ -1,0 +1,40 @@
+#!/usr/bin/env ruby
+# Interactive prompt loop - like a REPL
+# Usage: prompt-loop
+# Prints prompt, reads line, responds, repeat
+
+$stdout.sync = true
+$stderr.sync = true
+count = 0
+
+loop do
+  count += 1
+  sleep rand * 0.02
+
+  print "prompt[#{count}]> "
+
+  line = $stdin.gets
+  break unless line
+
+  line = line.chomp
+  sleep rand * 0.05
+
+  case line
+  when "quit", "exit"
+    puts "goodbye!"
+    break
+  when "error"
+    $stderr.puts "ERROR: simulated error"
+  when "slow"
+    sleep 0.5 + rand * 0.5
+    puts "...that was slow"
+  when "crash"
+    raise "user requested crash"
+  when /^wait (\d+)/
+    secs = $1.to_f / 1000.0
+    sleep secs
+    puts "waited #{$1}ms"
+  else
+    puts "you said: #{line}"
+  end
+end

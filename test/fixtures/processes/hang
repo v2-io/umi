@@ -1,0 +1,6 @@
+#!/usr/bin/env ruby
+# Hang - reads stdin forever, never writes output
+# Usage: hang
+# For testing timeouts. Must be killed to exit.
+
+$stdin.read  # Block forever on stdin

@@ -1,0 +1,22 @@
+#!/usr/bin/env ruby
+# Outputs as fast as possible - for buffer testing
+# Usage: firehose [count] [line_size]
+# Default: 1000 lines of 100 chars each
+
+count = (ARGV[0] || 1000).to_i
+size = (ARGV[1] || 100).to_i
+$stdout.sync = true
+
+chars = ('a'..'z').to_a + ('0'..'9').to_a
+
+count.times do |i|
+  # Random line content
+  line = (0...size).map { chars.sample }.join
+
+  # Occasional micro-pause (5% of lines)
+  sleep 0.001 if rand < 0.05
+
+  puts "#{i.to_s.rjust(6, '0')}: #{line}"
+end
+
+$stderr.puts "firehose complete: #{count} lines, ~#{count * (size + 10)} bytes"

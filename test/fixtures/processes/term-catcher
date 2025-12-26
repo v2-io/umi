@@ -1,0 +1,28 @@
+#!/usr/bin/env ruby
+# Catches SIGTERM, does cleanup, exits gracefully
+# Usage: term-catcher
+# Runs until killed, echoes input, handles TERM gracefully
+
+$stdout.sync = true
+$stderr.sync = true
+@running = true
+
+Signal.trap("TERM") do
+  $stderr.puts "[#{$$}] caught SIGTERM, cleaning up..."
+  sleep rand * 0.3  # Simulate cleanup
+  $stderr.puts "[#{$$}] cleanup done, exiting"
+  @running = false
+end
+
+puts "[#{$$}] started, send SIGTERM to stop gracefully"
+
+while @running
+  if IO.select([$stdin], nil, nil, 0.1)
+    line = $stdin.gets
+    break unless line
+    sleep rand * 0.02
+    puts "echo: #{line}"
+  end
+end
+
+exit 0

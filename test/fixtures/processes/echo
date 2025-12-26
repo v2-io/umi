@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+# Simple echo - returns each line unchanged with random micro-delays
+# Usage: echo
+
+$stdout.sync = true
+while line = $stdin.gets
+  sleep rand * 0.05  # 0-50ms jitter
+  puts line
+end

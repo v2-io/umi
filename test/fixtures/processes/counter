@@ -1,0 +1,16 @@
+#!/usr/bin/env ruby
+# Stateful counter - sometimes skips, sometimes doubles
+# Usage: counter
+
+$stdout.sync = true
+count = 0
+
+while line = $stdin.gets
+  count += 1
+  sleep rand * 0.04
+
+  # 10% chance to emit extra debug line
+  puts "[tick]" if rand < 0.1
+
+  puts "#{count}: #{line}"
+end
