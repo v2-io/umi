@@ -1,13 +1,14 @@
 # Phase 1 Pilot: Shellac
 
-**Status:** Planning
+**Status:** Ready for Implementation
 **Date:** 2025-12-26
+**Updated:** After spike validation
 
 ## What Is Shellac?
 
 Shellac transforms a long-lived external process into a Ractor-citizen with:
 - **Bidirectional messaging** - stdin/stdout as send/receive
-- **Death notification** - linked lifecycle, no polling required
+- **Death notification** - via `Ractor.monitor` (discovered in spikes!)
 - **Isolation** - process crashes become messages, not Ruby crashes
 
 Think of it as: "Erlang ports for Ruby 4.0"
@@ -29,39 +30,42 @@ result = shellac.join  # => Shellac::Result
 
 ---
 
-## Why Start Here?
+## What We Learned From Spikes
 
-1. **Solves a real problem** - Joseph's devex gem needs better subprocess management
-2. **Forces the hard questions** - Death detection is the core unsolved primitive
-3. **Concrete and testable** - External processes are observable
-4. **Addresses #1 killer** - Integration Points (from Release It!)
-5. **Pattern transfers** - What we learn applies to Ractor supervision
+### Key Discoveries (see `spikes/FINDINGS-DETAILS.md`)
+
+1. **`Ractor.monitor(port)`** - Ruby 4.0 provides death notification!
+   - Sends `:exited` (normal) or `:aborted` (crash) to specified port
+   - Can be mixed with message ports in `Ractor.select`
+
+2. **Spawn INSIDE the Ractor** - Process must be spawned internally
+   - Passing IO objects from main to Ractor hangs for bidirectional pipes
+   - `Open3.popen3` works inside Ractors
+   - Ractor that spawns the process "owns" it for `Process.wait2`
+
+3. **Threads inside Ractors** - Essential for async I/O
+   - stdout_thread, stderr_thread, death_thread pattern works
+   - Threads send to parent via `parent << [:event, data]`
+
+4. **NO native timeout in `Ractor.select`** - Must use timer Ractor pattern
+   - Spawn a Ractor that sleeps then sends `:timeout`
+   - Include timer_port in select
+   - Challenge: cleanup timer if message arrives first
+
+5. **Port ownership** - Only creator can `receive`, anyone can `send`
+
+### What the Original Plan Got Wrong
+
+| Original Assumption | Reality |
+|---------------------|---------|
+| Pass pipes to Watcher Ractor | Spawn process INSIDE Watcher |
+| `Ractor.select` has timeout | NO - use timer Ractor pattern |
+| "No built-in process linking" | `Ractor.monitor` provides this! |
+| Need to build death detection | Already exists via monitor |
 
 ---
 
-## Design Constraints
-
-### From Ruby 4.0 Ractors
-- Objects crossing Ractor boundaries must be shareable (frozen) or moved
-- Ractor::Port provides named mailboxes
-- Ractor.select enables multiplexed waiting with timeout
-- No built-in process linking
-
-### From the Problem Domain
-- External processes communicate via stdin/stdout/stderr
-- They signal completion via exit codes and signals
-- They can hang, crash, or produce unbounded output
-- We need timeout capability at every layer
-
-### From Ruby Philosophy
-- Blocks for configuration
-- Duck typing over rigid interfaces
-- Composition over inheritance
-- Explicit over implicit
-
----
-
-## Architecture
+## Architecture (Revised)
 
 ### Core Components
 
@@ -72,21 +76,20 @@ result = shellac.join  # => Shellac::Result
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│                  Shellac (API)                           │
-│   - new/start                                            │
-│   - send (<<)                                            │
-│   - receive                                              │
-│   - on_exit                                              │
-│   - join                                                 │
-│   - kill                                                 │
+│                  Shellac (API object)                    │
+│   - Holds reference to Watcher Ractor                   │
+│   - Forwards commands: [:stdin, data], [:kill, sig]     │
+│   - Receives events: [:stdout, line], [:process_died]   │
+│   - Monitors Watcher with watcher.monitor(inbox)        │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│              Watcher Ractor                              │
-│   - Owns the OS process (pid)                            │
-│   - Runs Process.wait2 in background                     │
-│   - Posts to exit_port when process dies                 │
-│   - Handles stdin/stdout/stderr pipes                    │
+│              Watcher Ractor (OWNS EVERYTHING)           │
+│   - Spawns process with Open3.popen3 internally         │
+│   - stdout_thread: reads stdout, sends to parent        │
+│   - stderr_thread: reads stderr, sends to parent        │
+│   - death_thread: wait_thr.value, sends to parent       │
+│   - Command loop: Ractor.receive → stdin.write          │
 └─────────────────────────┬───────────────────────────────┘
                           │
                     ┌─────┴─────┐
@@ -95,32 +98,59 @@ result = shellac.join  # => Shellac::Result
                     └───────────┘
 ```
 
-### Message Flow
+### Message Flow (Revised)
 
 ```
 User           Shellac         Watcher Ractor       OS Process
   │                │                  │                  │
   │── new(cmd) ───▶│                  │                  │
-  │                │── spawn ────────▶│                  │
-  │                │                  │── Process.spawn ▶│
+  │                │── Ractor.new ───▶│                  │
+  │                │   (cmd passed    │── popen3(cmd) ──▶│
+  │                │    as arg)       │   (spawns        │
+  │                │                  │    internally)   │
+  │                │                  │                  │
+  │                │◀─ [:started,pid]─│                  │
   │                │                  │                  │
   │── << msg ─────▶│                  │                  │
-  │                │── write_port ───▶│                  │
+  │                │── [:stdin,msg] ─▶│                  │
   │                │                  │── stdin.write ──▶│
   │                │                  │                  │
   │                │                  │◀── stdout ───────│
-  │                │◀── read_port ────│                  │
+  │                │◀─ [:stdout,line]─│  (via thread)    │
   │◀── receive ────│                  │                  │
   │                │                  │                  │
   │                │                  │    (process dies)│
-  │                │                  │◀── wait2 ────────│
-  │                │◀── exit_port ────│                  │
+  │                │◀─[:process_died]─│◀── wait_thr ─────│
+  │                │◀─ :exited ───────│  (via monitor)   │
   │◀── on_exit ────│                  │                  │
 ```
 
 ---
 
-## API Design
+## Design Constraints (Updated)
+
+### From Ruby 4.0 Ractors (Verified by Spikes)
+- Process MUST be spawned inside the Ractor (not passed FDs)
+- `Ractor.monitor(port)` provides death notification
+- `Ractor.select` has NO timeout - use timer Ractor pattern
+- Port ownership: only creator can receive
+- Threads inside Ractors work for async I/O
+
+### From the Problem Domain (Unchanged)
+- External processes communicate via stdin/stdout/stderr
+- They signal completion via exit codes and signals
+- They can hang, crash, or produce unbounded output
+- We need timeout capability at every layer
+
+### From Ruby Philosophy (Unchanged)
+- Blocks for configuration
+- Duck typing over rigid interfaces
+- Composition over inheritance
+- Explicit over implicit
+
+---
+
+## API Design (Mostly Unchanged)
 
 ### Creation
 
@@ -136,7 +166,7 @@ shellac = ROTP::Shellac.new("server",
   env: { "PORT" => "3000" },
   chdir: "/app",
   stderr: :merge,        # merge stderr into stdout stream
-  line_buffered: true    # receive line-by-line instead of chunks
+  line_buffered: true    # receive line-by-line instead of chunks (default)
 )
 
 # Block form (auto-cleanup)
@@ -149,27 +179,24 @@ end  # automatically killed and joined on block exit
 ### Sending (stdin)
 
 ```ruby
-# Send bytes
 shellac << "raw bytes"
-shellac.send("explicit send")
-
-# Send with newline (convenience)
-shellac.puts("line of text")
+shellac.puts("line of text")  # adds newline
+shellac.close_stdin           # signal EOF
 ```
 
 ### Receiving (stdout/stderr)
 
 ```ruby
-# Blocking receive
-data = shellac.receive
+# Blocking receive (default: line-buffered)
+line = shellac.receive
 
-# With timeout
-data = shellac.receive(timeout: 5.0)
-# => data or raises Shellac::Timeout
+# With timeout (uses timer Ractor internally)
+line = shellac.receive(timeout: 5.0)
+# => line or raises Shellac::Timeout
 
-# Non-blocking check
+# Check without blocking
 if shellac.readable?
-  data = shellac.receive
+  line = shellac.receive
 end
 
 # Enumerable interface
@@ -181,7 +208,7 @@ end
 ### Death Notification
 
 ```ruby
-# Callback style (non-blocking)
+# Callback style - fires when process dies
 shellac.on_exit do |result|
   puts "Process exited: #{result.exit_code}"
   puts "Signal: #{result.signal}" if result.signaled?
@@ -199,15 +226,9 @@ shellac.exited?  # => true/false
 ### Lifecycle Control
 
 ```ruby
-# Signals
 shellac.kill(:TERM)
-shellac.kill(:INT)
 shellac.kill(:KILL)
-
-# Graceful shutdown (TERM, wait, KILL if needed)
-shellac.stop(timeout: 5.0)
-
-# Close stdin (signal EOF to process)
+shellac.stop(timeout: 5.0)  # TERM, wait, KILL if needed
 shellac.close_stdin
 ```
 
@@ -226,60 +247,74 @@ end
 
 ---
 
-## Implementation Plan
+## Implementation Plan (Revised)
 
-### Step 1: Minimal Viable Shellac
-- [ ] `Shellac.new(cmd, *args)` spawns process
-- [ ] `Shellac#<<` writes to stdin
-- [ ] `Shellac#receive` reads from stdout (blocking)
-- [ ] `Shellac#join` waits for exit, returns Result
-- [ ] `Shellac#alive?` checks if still running
-- [ ] Basic test with a simple command like `cat`
+### Step 1: Minimal Watcher Ractor
+Based on spike_c's proven pattern:
 
-### Step 2: Death Notification
-- [ ] Watcher Ractor that runs `Process.wait2`
-- [ ] Exit port for death notifications
-- [ ] `Shellac#on_exit` callback registration
+- [ ] Watcher Ractor spawns process with `Open3.popen3` internally
+- [ ] stdout_thread reads lines, sends `[:stdout, line]` to parent
+- [ ] stderr_thread reads lines, sends `[:stderr, line]` to parent
+- [ ] death_thread waits on `wait_thr.value`, sends `[:process_died, pid, code]`
+- [ ] Command loop receives `[:stdin, data]`, `[:close_stdin]`, `[:kill, sig]`, `[:shutdown]`
+- [ ] Test: `cat` echoes input back
+
+### Step 2: Shellac API Wrapper
+- [ ] `Shellac.new(cmd, *args)` creates Watcher Ractor
+- [ ] `Shellac#<<` sends `[:stdin, data]` to Watcher
+- [ ] `Shellac#receive` blocks on inbox port for `[:stdout, line]`
+- [ ] `Shellac#join` sends `[:shutdown]`, waits for Watcher, returns Result
+- [ ] `Shellac#alive?` checks Watcher status
+- [ ] `watcher.monitor(inbox)` for Watcher crash detection
+- [ ] Test: full lifecycle with cat
+
+### Step 3: Death Notification
+- [ ] Collect `[:process_died, pid, exit_code]` events
+- [ ] `Shellac#on_exit` registers callback
+- [ ] Callback fired when process_died received
+- [ ] Also detect Watcher crash via `:aborted` from monitor
 - [ ] Test: process exits normally, callback fires
-- [ ] Test: process killed, callback fires with signal
+- [ ] Test: process killed, callback fires with signal info
 
-### Step 3: Timeout Support
-- [ ] `Shellac#receive(timeout:)` using Ractor.select
-- [ ] `Shellac#join(timeout:)`
-- [ ] `Shellac::Timeout` exception
+### Step 4: Timeout Support
+Timer Ractor pattern (no native Ractor.select timeout):
+
+- [ ] `receive(timeout:)` spawns timer Ractor
+- [ ] Timer sleeps, sends `:timeout` to timer_port
+- [ ] `Ractor.select(inbox, timer_port)`
+- [ ] Return message or raise `Shellac::Timeout`
+- [ ] **Challenge:** Clean up timer Ractor if message arrives first
 - [ ] Test: slow process times out correctly
 
-### Step 4: Robustness
-- [ ] stderr handling (separate stream vs merged)
-- [ ] Line buffering option
-- [ ] Graceful shutdown with `stop(timeout:)`
+### Step 5: Robustness
+- [ ] stderr handling (separate events vs merged)
+- [ ] `stop(timeout:)` - TERM, wait, KILL escalation
 - [ ] Handle process that ignores SIGTERM
+- [ ] Filter closed ports before `Ractor.select` (spike finding)
 - [ ] Test: flaky process that sometimes hangs
 
-### Step 5: Ergonomics
+### Step 6: Ergonomics
 - [ ] Block form with auto-cleanup
-- [ ] Enumerable interface for output
+- [ ] `each_line` enumerable interface
 - [ ] Environment and chdir options
 - [ ] Integration example with a real CLI tool
 
 ---
 
-## Test Cases
+## Test Cases (Unchanged, but Now Validated by Spikes)
 
 ### Happy Path
 ```ruby
-# Echo test
 shellac = Shellac.new("cat")
 shellac << "hello"
 shellac.close_stdin
-assert_equal "hello", shellac.receive
+assert_equal "hello\n", shellac.receive  # Note: cat adds newline
 result = shellac.join
 assert result.success?
 ```
 
 ### Death Detection
 ```ruby
-# Process exits on its own
 shellac = Shellac.new("sleep", "0.1")
 exited = false
 shellac.on_exit { exited = true }
@@ -289,7 +324,6 @@ assert exited
 
 ### Timeout
 ```ruby
-# Process that never responds
 shellac = Shellac.new("sleep", "100")
 assert_raises(Shellac::Timeout) do
   shellac.receive(timeout: 0.1)
@@ -299,7 +333,6 @@ shellac.kill(:KILL)
 
 ### Crash Detection
 ```ruby
-# Process that crashes
 shellac = Shellac.new("ruby", "-e", "exit 42")
 result = shellac.join
 assert_equal 42, result.exit_code
@@ -308,7 +341,6 @@ refute result.success?
 
 ### Signal Detection
 ```ruby
-# Process killed by signal
 shellac = Shellac.new("sleep", "100")
 shellac.kill(:TERM)
 result = shellac.join
@@ -318,35 +350,38 @@ assert_equal :TERM, result.signal
 
 ---
 
-## Open Questions
+## Open Questions (Updated)
 
-1. **How to handle stderr?**
-   - Separate stream (more control, more complexity)
-   - Merged with stdout (simpler, loses distinction)
-   - Configurable per-shellac
+### Answered by Spikes
 
-2. **What if stdout fills up faster than we read?**
-   - OS buffers are finite (~64KB typically)
-   - Process can block on write
-   - Need to document this or add buffering
+1. ~~**How to detect death?**~~ → `Ractor.monitor(port)` sends `:exited`/`:aborted`
+2. ~~**Can we pass IO to Ractors?**~~ → Spawn inside instead, works perfectly
+3. ~~**Does Ractor.select have timeout?**~~ → No, use timer Ractor pattern
 
-3. **How granular should receive be?**
-   - Raw bytes (simple but awkward for line protocols)
-   - Line-buffered (convenient but assumes text)
-   - Configurable
+### Still Open
 
-4. **Should on_exit callbacks run in the Watcher Ractor or main?**
-   - In Watcher: isolated, but can't access main state
-   - In main: convenient, but blocks main thread
-   - Via another port to main Ractor?
+1. **Timer Ractor cleanup** - If message arrives before timeout, timer Ractor
+   keeps running and will send `:timeout` later. Options:
+   - Let it complete, discard late `:timeout` messages
+   - Track timer Ractors, close their ports on message receipt
+   - Timer pool that can be cancelled
 
-5. **Integration with devex?**
-   - Can `Shellac` become the foundation for `spawn`?
-   - How does environment stack (dotenv/mise/bundle) interact?
+2. **Binary/raw mode** - Spikes only tested `.gets` line-by-line. For binary
+   protocols, need `.readpartial` or `.read_nonblock`. Add `mode: :raw` option?
+
+3. **Buffer overflow** - What if process writes faster than we read? OS buffers
+   are ~64KB. Process blocks on write. Document this? Add internal buffering?
+
+4. **on_exit callback execution** - Currently callbacks would fire in main thread
+   when processing messages. Is this the right model? Should there be a
+   dedicated callback thread?
+
+5. **Integration with devex** - Can Shellac become foundation for devex `spawn`?
+   Need to consider environment stack (dotenv/mise/bundle).
 
 ---
 
-## Success Criteria
+## Success Criteria (Unchanged)
 
 Phase 1 is complete when:
 
@@ -359,22 +394,24 @@ Phase 1 is complete when:
 
 ---
 
-## What We'll Learn
+## What We Already Learned (From Spikes)
 
-Building Shellac will teach us:
+Building the spikes taught us:
 
-1. **How to detect death** - The `Process.wait2` in a Ractor pattern
-2. **How to multiplex** - Ractor.select for timeout + multiple sources
-3. **How to structure supervision** - The Watcher pattern
-4. **What's hard** - Where Ruby 4.0 Ractors have rough edges
-5. **What generalizes** - Patterns that apply to Ractor supervision
+1. **Death detection** - `Ractor.monitor` exists and works!
+2. **How to multiplex** - `Ractor.select` with timer Ractor for timeout
+3. **Architecture** - Spawn inside Ractor, threads for async I/O
+4. **Ruby 4.0 API** - `r.value` not `r.take`, `Ractor::Port` is primary
+5. **Gotchas** - Closed port in select fails immediately, need filtering
 
-This is foundational work. Get it right here, and ROTP has solid ground to build on.
+The foundational patterns are proven. Now we wrap them in a clean API.
 
 ---
 
 ## References
 
+- Spike findings: `spikes/FINDINGS.md`, `spikes/FINDINGS-DETAILS.md`
+- Working pattern: `spikes/spike_c_watcher.rb` FINAL test
 - Erlang Ports: https://www.erlang.org/doc/tutorial/c_port.html
 - Ruby Process: https://ruby-doc.org/core/Process.html
 - Ruby Ractor: https://ruby-doc.org/core/Ractor.html
