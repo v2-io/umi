@@ -62,6 +62,30 @@ module ROTP
 
     attr_reader :pid
 
+    # Open a Shellac, yield it, and ensure cleanup.
+    #
+    # @param cmd [String] The command to run
+    # @param args [Array<String>] Arguments
+    # @param opts [Hash] Options (see #initialize)
+    # @yield [Shellac] The shellac instance
+    # @return [Result] The process result
+    def self.open(cmd, *args, **opts)
+      shellac = new(cmd, *args, **opts)
+      begin
+        yield shellac
+      ensure
+        if shellac.alive?
+          # Give process a moment to exit naturally, then force stop
+          begin
+            shellac.join(timeout: 0.5)
+          rescue Timeout
+            shellac.stop(timeout: 2.0)
+          end
+        end
+      end
+      shellac.result || shellac.join(timeout: 1.0)
+    end
+
     # Create a new Shellac wrapping the given command.
     #
     # @param cmd [String] The command to run
@@ -119,6 +143,16 @@ module ROTP
     # @raise [Timeout] If timeout expires
     # @raise [ProcessExited] If process has exited and no more data
     def receive(timeout: nil)
+      # If already exited, check buffer for remaining stdout, else raise
+      if @exited
+        buffered = @message_buffer.find { |m| m[0] == :stdout }
+        if buffered
+          @message_buffer.delete(buffered)
+          return buffered[1]
+        end
+        raise ProcessExited, "Process has exited"
+      end
+
       # Check buffer first
       msg = drain_until_stdout(timeout: timeout)
 
@@ -229,6 +263,7 @@ module ROTP
         in [:process_died, _pid, exit_code, sig]
           handle_death(exit_code, sig)
           @watcher << [:shutdown]  # Direct send, bypass exited check
+          @watcher.value rescue nil  # Wait for watcher to clean up
           return @result
         in [:stdout, _] | [:stderr, _]
           # Discard remaining output
@@ -260,6 +295,60 @@ module ROTP
     # @return [Boolean]
     def exited?
       @exited
+    end
+
+    # Get the result if the process has exited.
+    #
+    # @return [Result, nil]
+    def result
+      @result
+    end
+
+    # Iterate over stdout lines until process exits.
+    #
+    # @param timeout [Float] Max time to wait for each line (default 30s)
+    # @yield [String] Each line from stdout
+    # @return [Result] The process result
+    def each_line(timeout: 30.0)
+      return enum_for(:each_line, timeout: timeout) unless block_given?
+
+      loop do
+        begin
+          line = receive(timeout: timeout)
+          yield line
+        rescue ProcessExited, Timeout
+          break
+        end
+      end
+
+      @result || join(timeout: timeout)
+    end
+
+    # Iterate over all output (stdout and stderr interleaved).
+    #
+    # @yield [Symbol, String] [:stdout, line] or [:stderr, line]
+    # @return [Result]
+    def each_output
+      return enum_for(:each_output) unless block_given?
+
+      loop do
+        msg = receive_message
+        case msg
+        in [:stdout, line]
+          yield :stdout, line
+        in [:stderr, line]
+          yield :stderr, line
+        in [:process_died, _, _, _]
+          handle_death(msg[2], msg[3])
+          break
+        in [:stdout_closed] | [:stderr_closed]
+          next
+        else
+          next
+        end
+      end
+
+      @result
     end
 
     def inspect
@@ -373,16 +462,21 @@ module ROTP
 
       if timeout.nil?
         @inbox.receive
-      elsif timeout == 0
-        # Non-blocking check - use select with tiny timeout
-        result = Ractor.select(@inbox, timeout: 0.001)
-        result ? result[1] : nil
+      elsif timeout <= 0
+        # Non-blocking check - just return nil if nothing available
+        # Unfortunately Ractor.select doesn't support non-blocking, so use tiny timer
+        timer_port = Ractor::Port.new
+        Thread.new { sleep(0.001); timer_port.send(:timeout) }
+
+        source, msg = Ractor.select(@inbox, timer_port)
+        source == timer_port ? nil : msg
       else
         # Use timer Ractor pattern
         timer_port = Ractor::Port.new
-        timer = Ractor.new(timer_port, timeout) do |port, t|
+        # Use Thread instead of Ractor to avoid accumulating Ractors
+        Thread.new(timer_port, timeout) do |port, t|
           sleep(t)
-          port.send(:timeout)
+          port.send(:timeout) rescue nil
         end
 
         source, msg = Ractor.select(@inbox, timer_port)
@@ -390,7 +484,6 @@ module ROTP
         if source == timer_port
           :timeout
         else
-          # Got real message - timer will still fire later, but we'll ignore it
           msg
         end
       end

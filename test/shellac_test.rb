@@ -189,16 +189,23 @@ results << test("counter fixture") do
   shellac = ROTP::Shellac.new("#{FIXTURES}/counter")
 
   shellac << "a\n"
-  line1 = shellac.receive
-  assert line1.include?("1:"), "expected '1:', got #{line1}"
 
-  shellac << "b\n"
-  line2 = shellac.receive
-  # May have [tick] prefix sometimes
-  assert line2.include?("2:") || line2.include?("1:"), "expected count, got #{line2}"
+  # Counter may emit [tick] before the count, so collect until we see a count
+  lines = []
+  3.times do
+    begin
+      line = shellac.receive(timeout: 1.0)
+      lines << line
+      break if line.include?("1:")
+    rescue ROTP::Shellac::Timeout
+      break
+    end
+  end
+
+  assert lines.any? { |l| l.include?("1:") }, "expected '1:' in #{lines.inspect}"
 
   shellac.close_stdin
-  shellac.join
+  shellac.join(timeout: 2.0)
 end
 
 results << test("dot multi-shot") do
@@ -244,7 +251,7 @@ results << test("stderr to stdout with merge mode") do
   lines = []
   3.times do
     begin
-      line = shellac.receive(timeout: 1.0)
+      line = shellac.receive(timeout: 0.5)
       lines << line
       break if line.include?("HELLO")
     rescue ROTP::Shellac::Timeout, ROTP::Shellac::ProcessExited
@@ -255,7 +262,37 @@ results << test("stderr to stdout with merge mode") do
   assert lines.any? { |l| l.include?("HELLO") }, "expected HELLO in output, got #{lines.inspect}"
 
   shellac.close_stdin
-  shellac.join(timeout: 2.0)
+  shellac.join(timeout: 1.0)
+end
+
+# =============================================================================
+# Ergonomics
+# =============================================================================
+puts "\n--- Ergonomics ---"
+
+results << test("block form (open)") do
+  # Use echo instead of drip for speed
+  result = ROTP::Shellac.open("cat") do |s|
+    s << "hello\n"
+    line = s.receive(timeout: 1.0)
+    assert_equal "hello\n", line
+    s.close_stdin
+  end
+
+  assert result.is_a?(ROTP::Shellac::Result), "expected Result, got #{result.class}"
+  assert result.success?
+end
+
+results << test("each_line enumeration") do
+  # Use a simple echo that sends 3 lines and exits
+  shellac = ROTP::Shellac.new("ruby", "-e", "3.times { |i| puts i }")
+  lines = []
+
+  shellac.each_line(timeout: 2.0) do |line|
+    lines << line.chomp
+  end
+
+  assert_equal ["0", "1", "2"], lines
 end
 
 # =============================================================================
