@@ -127,7 +127,7 @@ test("Ractors with popen3") do |i|
 end
 
 # =============================================================================
-# TEST 5: Ractors with popen3 + async threads (like Shellac)
+# TEST 5: Ractors with popen3 + async threads (like Proctor)
 # =============================================================================
 test("Ractors with popen3 + threads") do |i|
   port = Ractor::Port.new
@@ -163,7 +163,7 @@ test("Ractors with popen3 + threads") do |i|
 end
 
 # =============================================================================
-# TEST 6: Ractors with command loop (like Shellac's watcher)
+# TEST 6: Ractors with command loop (like Proctor's watcher)
 # =============================================================================
 test("Ractors with command loop", count: 3) do |i|
   port = Ractor::Port.new
@@ -276,9 +276,9 @@ test("Ractors with monitor") do |i|
 end
 
 # =============================================================================
-# TEST 10: Full Shellac pattern
+# TEST 10: Full Proctor pattern
 # =============================================================================
-test("Full Shellac pattern", count: 3) do |i|
+test("Full Proctor pattern", count: 3) do |i|
   inbox = Ractor::Port.new
 
   watcher = Ractor.new(inbox, i) do |inbox, n|

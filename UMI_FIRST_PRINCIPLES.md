@@ -1,4 +1,4 @@
-# ROTP First Principles: What Are We Actually Solving?
+# Umi First Principles: What Are We Actually Solving?
 
 ## The Reframe
 
@@ -294,7 +294,7 @@ A "Worker" is:
 
 ```ruby
 class PaymentProcessor
-  include ROTP::Worker
+  include Umi::Worker
 
   # Declarative resilience
   resilience timeout: 30.seconds,
@@ -325,7 +325,7 @@ Rather than complex supervision trees, what if we embrace Ruby's simplicity?
 
 ```ruby
 class MyApplication
-  include ROTP::Application
+  include Umi::Application
 
   workers do
     # Workers with restart policies
@@ -361,8 +361,8 @@ processor = PaymentProcessor.new
 
 # Or declaratively in the class
 class PaymentProcessor
-  include ROTP::Worker
-  include ROTP::Resilient
+  include Umi::Worker
+  include Umi::Resilient
 
   resilient do
     timeout 30.seconds
@@ -379,13 +379,13 @@ OTP has multiple registry mechanisms. Ruby should have one good one:
 
 ```ruby
 # Simple, type-safe, observable
-ROTP::Registry.register(:payment_processor, processor)
-ROTP::Registry.lookup(:payment_processor)
-ROTP::Registry.whereis(:payment_processor)  # => Ractor or nil
-ROTP::Registry.list  # => all registered names
+Umi::Registry.register(:payment_processor, processor)
+Umi::Registry.lookup(:payment_processor)
+Umi::Registry.whereis(:payment_processor)  # => Ractor or nil
+Umi::Registry.list  # => all registered names
 
 # With pattern matching
-case ROTP::Registry.lookup(:payment_processor)
+case Umi::Registry.lookup(:payment_processor)
 in Ractor => r then r.call(msg)
 in nil then raise WorkerNotFound
 end
@@ -399,7 +399,7 @@ Following the OTP book's layered approach, but Ruby-style:
 ┌─────────────────────────────────────────┐
 │  API Layer (Controllers/Handlers)       │ ← HTTP/WebSocket/CLI
 ├─────────────────────────────────────────┤
-│  Boundary Layer (Workers)               │ ← ROTP::Worker
+│  Boundary Layer (Workers)               │ ← Umi::Worker
 ├─────────────────────────────────────────┤
 │  Core Layer (Pure Ruby)                 │ ← Data + Functions
 └─────────────────────────────────────────┘
@@ -424,7 +424,7 @@ end
 module Mastery
   module Boundary
     class QuizManager
-      include ROTP::Worker
+      include Umi::Worker
 
       def init(_) = { quizzes: {} }
 
@@ -527,7 +527,7 @@ Most Ruby gems are not Ractor-safe. How do we handle this?
 ```ruby
 # ActiveRecord isn't Ractor-safe, so contain it
 class DatabaseGateway
-  include ROTP::Worker
+  include Umi::Worker
 
   def init(_)
     # This Ractor owns the DB connection
@@ -541,7 +541,7 @@ class DatabaseGateway
 end
 
 # Other Ractors communicate via messages
-db = ROTP::Registry.lookup(:database)
+db = Umi::Registry.lookup(:database)
 result = db.call([:query, "SELECT * FROM users"])
 ```
 
@@ -549,12 +549,12 @@ result = db.call([:query, "SELECT * FROM users"])
 
 ## Part 6: Implementation Roadmap
 
-### Phase 1: Shellac (Current Focus)
+### Phase 1: Proctor (Current Focus)
 
-**See: `phase-1-pilot-shellac.md`**
+**See: `phase-1-pilot-proctor.md`**
 
 Before building internal Ractor supervision, we're solving the same problem for
-external processes. Shellac wraps a long-lived OS process as a Ractor-citizen:
+external processes. Proctor wraps a long-lived OS process as a Ractor-citizen:
 
 - Bidirectional messaging (stdin/stdout as send/receive)
 - Death notification (linked lifecycle)
@@ -564,23 +564,23 @@ This forces us to solve the hard problems (death detection, multiplexing) in a
 concrete, testable context. What we learn applies directly to Ractor supervision.
 
 ```ruby
-shellac = ROTP::Shellac.new("redis-server")
-shellac << "PING\r\n"
-response = shellac.receive(timeout: 5.0)
-shellac.on_exit { |result| log "Redis exited: #{result}" }
+proctor = Umi::Proctor.new("redis-server")
+proctor << "PING\r\n"
+response = proctor.receive(timeout: 5.0)
+proctor.on_exit { |result| log "Redis exited: #{result}" }
 ```
 
 ### Phase 2: Foundations
-- [ ] `ROTP::Worker` module - basic Ractor wrapper with lifecycle
-- [ ] `ROTP::Registry` - simple name registration
-- [ ] Apply Shellac patterns to Ractor death detection
+- [ ] `Umi::Worker` module - basic Ractor wrapper with lifecycle
+- [ ] `Umi::Registry` - simple name registration
+- [ ] Apply Proctor patterns to Ractor death detection
 - [ ] Basic examples and tests
 
 ### Phase 3: Resilience Patterns
-- [ ] `ROTP::CircuitBreaker` - three-state circuit breaker
-- [ ] `ROTP::Retry` - retry with backoff
-- [ ] `ROTP::Bulkhead` - bounded concurrency
-- [ ] `ROTP::Resilient` - declarative composition
+- [ ] `Umi::CircuitBreaker` - three-state circuit breaker
+- [ ] `Umi::Retry` - retry with backoff
+- [ ] `Umi::Bulkhead` - bounded concurrency
+- [ ] `Umi::Resilient` - declarative composition
 
 ### Phase 4: Supervision
 - [ ] Heartbeat-based liveness detection

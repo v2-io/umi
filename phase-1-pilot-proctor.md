@@ -1,12 +1,12 @@
-# Phase 1 Pilot: Shellac
+# Phase 1 Pilot: Proctor
 
 **Status:** Ready for Implementation
 **Date:** 2025-12-26
 **Updated:** After spike validation
 
-## What Is Shellac?
+## What Is Proctor?
 
-Shellac transforms a long-lived external process into a Ractor-citizen with:
+Proctor transforms a long-lived external process into a Ractor-citizen with:
 - **Bidirectional messaging** - stdin/stdout as send/receive
 - **Death notification** - via `Ractor.monitor` (discovered in spikes!)
 - **Isolation** - process crashes become messages, not Ruby crashes
@@ -15,17 +15,17 @@ Think of it as: "Erlang ports for Ruby 4.0"
 
 ```ruby
 # Vision
-shellac = ROTP::Shellac.new("redis-server", "--port", "6379")
+proctor = Umi::Proctor.new("redis-server", "--port", "6379")
 
 # Bidirectional communication
-shellac << "PING\r\n"
-response = shellac.receive  # => "PONG\r\n"
+proctor << "PING\r\n"
+response = proctor.receive  # => "PONG\r\n"
 
 # Death notification (non-blocking)
-shellac.on_exit { |status| log "Redis died: #{status}" }
+proctor.on_exit { |status| log "Redis died: #{status}" }
 
 # Or blocking wait
-result = shellac.join  # => Shellac::Result
+result = proctor.join  # => Proctor::Result
 ```
 
 ---
@@ -72,11 +72,11 @@ result = shellac.join  # => Shellac::Result
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    User Code                             │
-│   shellac = Shellac.new("cmd"); shellac << msg          │
+│   proctor = Proctor.new("cmd"); proctor << msg          │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│                  Shellac (API object)                    │
+│                  Proctor (API object)                    │
 │   - Holds reference to Watcher Ractor                   │
 │   - Forwards commands: [:stdin, data], [:kill, sig]     │
 │   - Receives events: [:stdout, line], [:process_died]   │
@@ -101,7 +101,7 @@ result = shellac.join  # => Shellac::Result
 ### Message Flow (Revised)
 
 ```
-User           Shellac         Watcher Ractor       OS Process
+User           Proctor         Watcher Ractor       OS Process
   │                │                  │                  │
   │── new(cmd) ───▶│                  │                  │
   │                │── Ractor.new ───▶│                  │
@@ -156,13 +156,13 @@ User           Shellac         Watcher Ractor       OS Process
 
 ```ruby
 # Basic
-shellac = ROTP::Shellac.new("redis-server")
+proctor = Umi::Proctor.new("redis-server")
 
 # With arguments
-shellac = ROTP::Shellac.new("ffmpeg", "-i", input, "-o", output)
+proctor = Umi::Proctor.new("ffmpeg", "-i", input, "-o", output)
 
 # With options
-shellac = ROTP::Shellac.new("server",
+proctor = Umi::Proctor.new("server",
   env: { "PORT" => "3000" },
   chdir: "/app",
   stderr: :merge,        # merge stderr into stdout stream
@@ -170,7 +170,7 @@ shellac = ROTP::Shellac.new("server",
 )
 
 # Block form (auto-cleanup)
-ROTP::Shellac.open("redis-server") do |redis|
+Umi::Proctor.open("redis-server") do |redis|
   redis << "PING\r\n"
   puts redis.receive
 end  # automatically killed and joined on block exit
@@ -179,28 +179,28 @@ end  # automatically killed and joined on block exit
 ### Sending (stdin)
 
 ```ruby
-shellac << "raw bytes"
-shellac.puts("line of text")  # adds newline
-shellac.close_stdin           # signal EOF
+proctor << "raw bytes"
+proctor.puts("line of text")  # adds newline
+proctor.close_stdin           # signal EOF
 ```
 
 ### Receiving (stdout/stderr)
 
 ```ruby
 # Blocking receive (default: line-buffered)
-line = shellac.receive
+line = proctor.receive
 
 # With timeout (uses timer Ractor internally)
-line = shellac.receive(timeout: 5.0)
-# => line or raises Shellac::Timeout
+line = proctor.receive(timeout: 5.0)
+# => line or raises Proctor::Timeout
 
 # Check without blocking
-if shellac.readable?
-  line = shellac.receive
+if proctor.readable?
+  line = proctor.receive
 end
 
 # Enumerable interface
-shellac.each_line do |line|
+proctor.each_line do |line|
   process(line)
 end
 ```
@@ -209,33 +209,33 @@ end
 
 ```ruby
 # Callback style - fires when process dies
-shellac.on_exit do |result|
+proctor.on_exit do |result|
   puts "Process exited: #{result.exit_code}"
   puts "Signal: #{result.signal}" if result.signaled?
 end
 
 # Blocking wait
-result = shellac.join
-result = shellac.join(timeout: 30.0)
+result = proctor.join
+result = proctor.join(timeout: 30.0)
 
 # Check without blocking
-shellac.alive?   # => true/false
-shellac.exited?  # => true/false
+proctor.alive?   # => true/false
+proctor.exited?  # => true/false
 ```
 
 ### Lifecycle Control
 
 ```ruby
-shellac.kill(:TERM)
-shellac.kill(:KILL)
-shellac.stop(timeout: 5.0)  # TERM, wait, KILL if needed
-shellac.close_stdin
+proctor.kill(:TERM)
+proctor.kill(:KILL)
+proctor.stop(timeout: 5.0)  # TERM, wait, KILL if needed
+proctor.close_stdin
 ```
 
 ### Result Object
 
 ```ruby
-class Shellac::Result
+class Proctor::Result
   def exit_code    # Integer 0-255, or nil if signaled
   def signal       # Symbol like :TERM, :KILL, or nil
   def success?     # exit_code == 0
@@ -259,18 +259,18 @@ Based on spike_c's proven pattern:
 - [ ] Command loop receives `[:stdin, data]`, `[:close_stdin]`, `[:kill, sig]`, `[:shutdown]`
 - [ ] Test: `cat` echoes input back
 
-### Step 2: Shellac API Wrapper
-- [ ] `Shellac.new(cmd, *args)` creates Watcher Ractor
-- [ ] `Shellac#<<` sends `[:stdin, data]` to Watcher
-- [ ] `Shellac#receive` blocks on inbox port for `[:stdout, line]`
-- [ ] `Shellac#join` sends `[:shutdown]`, waits for Watcher, returns Result
-- [ ] `Shellac#alive?` checks Watcher status
+### Step 2: Proctor API Wrapper
+- [ ] `Proctor.new(cmd, *args)` creates Watcher Ractor
+- [ ] `Proctor#<<` sends `[:stdin, data]` to Watcher
+- [ ] `Proctor#receive` blocks on inbox port for `[:stdout, line]`
+- [ ] `Proctor#join` sends `[:shutdown]`, waits for Watcher, returns Result
+- [ ] `Proctor#alive?` checks Watcher status
 - [ ] `watcher.monitor(inbox)` for Watcher crash detection
 - [ ] Test: full lifecycle with cat
 
 ### Step 3: Death Notification
 - [ ] Collect `[:process_died, pid, exit_code]` events
-- [ ] `Shellac#on_exit` registers callback
+- [ ] `Proctor#on_exit` registers callback
 - [ ] Callback fired when process_died received
 - [ ] Also detect Watcher crash via `:aborted` from monitor
 - [ ] Test: process exits normally, callback fires
@@ -282,7 +282,7 @@ Timer Ractor pattern (no native Ractor.select timeout):
 - [ ] `receive(timeout:)` spawns timer Ractor
 - [ ] Timer sleeps, sends `:timeout` to timer_port
 - [ ] `Ractor.select(inbox, timer_port)`
-- [ ] Return message or raise `Shellac::Timeout`
+- [ ] Return message or raise `Proctor::Timeout`
 - [ ] **Challenge:** Clean up timer Ractor if message arrives first
 - [ ] Test: slow process times out correctly
 
@@ -305,45 +305,45 @@ Timer Ractor pattern (no native Ractor.select timeout):
 
 ### Happy Path
 ```ruby
-shellac = Shellac.new("cat")
-shellac << "hello"
-shellac.close_stdin
-assert_equal "hello\n", shellac.receive  # Note: cat adds newline
-result = shellac.join
+proctor = Proctor.new("cat")
+proctor << "hello"
+proctor.close_stdin
+assert_equal "hello\n", proctor.receive  # Note: cat adds newline
+result = proctor.join
 assert result.success?
 ```
 
 ### Death Detection
 ```ruby
-shellac = Shellac.new("sleep", "0.1")
+proctor = Proctor.new("sleep", "0.1")
 exited = false
-shellac.on_exit { exited = true }
+proctor.on_exit { exited = true }
 sleep 0.2
 assert exited
 ```
 
 ### Timeout
 ```ruby
-shellac = Shellac.new("sleep", "100")
-assert_raises(Shellac::Timeout) do
-  shellac.receive(timeout: 0.1)
+proctor = Proctor.new("sleep", "100")
+assert_raises(Proctor::Timeout) do
+  proctor.receive(timeout: 0.1)
 end
-shellac.kill(:KILL)
+proctor.kill(:KILL)
 ```
 
 ### Crash Detection
 ```ruby
-shellac = Shellac.new("ruby", "-e", "exit 42")
-result = shellac.join
+proctor = Proctor.new("ruby", "-e", "exit 42")
+result = proctor.join
 assert_equal 42, result.exit_code
 refute result.success?
 ```
 
 ### Signal Detection
 ```ruby
-shellac = Shellac.new("sleep", "100")
-shellac.kill(:TERM)
-result = shellac.join
+proctor = Proctor.new("sleep", "100")
+proctor.kill(:TERM)
+result = proctor.join
 assert result.signaled?
 assert_equal :TERM, result.signal
 ```
@@ -376,7 +376,7 @@ assert_equal :TERM, result.signal
    when processing messages. Is this the right model? Should there be a
    dedicated callback thread?
 
-5. **Integration with devex** - Can Shellac become foundation for devex `spawn`?
+5. **Integration with devex** - Can Proctor become foundation for devex `spawn`?
    Need to consider environment stack (dotenv/mise/bundle).
 
 ---

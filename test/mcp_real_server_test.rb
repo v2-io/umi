@@ -8,7 +8,7 @@
 # not just our mock server.
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'rotp/mcp_client'
+require 'umi/mcp_client'
 require 'fileutils'
 require 'tmpdir'
 
@@ -65,7 +65,7 @@ FileUtils.mkdir_p(File.join(TEST_DIR, "subdir"))
 File.write(File.join(TEST_DIR, "subdir", "nested.txt"), "Nested content\n")
 
 results << test("connect and initialize") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -80,7 +80,7 @@ results << test("connect and initialize") do
 end
 
 results << test("list_tools returns filesystem tools") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -100,7 +100,7 @@ results << test("list_tools returns filesystem tools") do
 end
 
 results << test("read_file tool works") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -120,7 +120,7 @@ results << test("read_file tool works") do
 end
 
 results << test("list_directory tool works") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -141,7 +141,7 @@ results << test("list_directory tool works") do
 end
 
 results << test("write_file tool works") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -161,7 +161,7 @@ results << test("write_file tool works") do
 end
 
 results << test("read nested file") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -179,7 +179,7 @@ results << test("read nested file") do
 end
 
 results << test("error on nonexistent file") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -191,7 +191,7 @@ results << test("error on nonexistent file") do
     error_raised = false
     begin
       client.call_tool("read_file", path: File.join(TEST_DIR, "nonexistent.txt"))
-    rescue ROTP::MCPClient::ServerError => e
+    rescue Umi::MCPClient::ServerError => e
       error_raised = true
     end
 
@@ -204,7 +204,7 @@ results << test("error on nonexistent file") do
 end
 
 results << test("multiple operations in sequence") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -239,7 +239,7 @@ results << test("multiple operations in sequence") do
 end
 
 results << test("rapid sequential calls") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -260,7 +260,7 @@ end
 
 results << test("concurrent clients to same server type") do
   clients = 3.times.map do
-    ROTP::MCPClient.new(
+    Umi::MCPClient.new(
       "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
       timeout: 30
     )
@@ -292,7 +292,7 @@ end
 puts "\n--- Resources ---"
 
 results << test("list_resources works or returns not supported") do
-  client = ROTP::MCPClient.new(
+  client = Umi::MCPClient.new(
     "npx", "-y", "@modelcontextprotocol/server-filesystem", TEST_DIR,
     timeout: 30
   )
@@ -304,7 +304,7 @@ results << test("list_resources works or returns not supported") do
     begin
       resources = client.list_resources
       assert resources.is_a?(Array), "should return array"
-    rescue ROTP::MCPClient::ServerError => e
+    rescue Umi::MCPClient::ServerError => e
       # "Method not found" is acceptable - server doesn't support resources
       assert e.message.include?("not found") || e.code == -32601
     end

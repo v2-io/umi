@@ -55,9 +55,9 @@ This approach handles both cases:
 
 **Observed:** During stress test with SEED=39196096427564143127199106449205316907
 
-**Symptom:** `100 Shellacs with proper cleanup` failed with:
+**Symptom:** `100 Proctors with proper cleanup` failed with:
 ```
-ROTP::Shellac::ProcessExited: Process exited with code 0
+Umi::Proctor::ProcessExited: Process exited with code 0
 ```
 
 The test runs `echo testN` 100 times. Sometimes, despite the process outputting successfully (exit code 0), we get ProcessExited instead of the output.
@@ -104,7 +104,7 @@ But we only received "parent".
 
 **Reproduction attempts:**
 - Running fork-bomb-lite 10x solo: PASSED (all output received)
-- Running 20x with concurrent cat shellacs: PASSED
+- Running 20x with concurrent cat proctors: PASSED
 - Running in full stress test suite: Has not failed again yet
 
 **Status:** LIKELY FIXED by Issue #2 fix

@@ -1,11 +1,11 @@
-# Spike Findings: Ruby 4.0 Ractors for Shellac
+# Spike Findings: Ruby 4.0 Ractors for Proctor
 
 **Date:** 2025-12-26
 **Ruby Version:** 4.0.0
 
 ## Executive Summary
 
-All critical unknowns have been resolved. We CAN build Shellac with Ruby 4.0 Ractors.
+All critical unknowns have been resolved. We CAN build Proctor with Ruby 4.0 Ractors.
 
 ## Key Discoveries
 
@@ -93,7 +93,7 @@ However, since we spawn inside the Ractor, we don't need to move IO.
 - `Ractor.receive` receives from the current Ractor's default port
 - `Ractor.select(port1, port2, ...)` for multiplexed waiting
 
-## The Shellac Architecture
+## The Proctor Architecture
 
 Based on spike findings, here's the proven architecture:
 
@@ -132,7 +132,7 @@ Based on spike findings, here's the proven architecture:
 2. **Receiving from a Port you didn't create** - raises error
 3. **Sharing mutable objects without move** - objects are moved, not shared
 
-## Implications for Shellac
+## Implications for Proctor
 
 1. **Simple architecture**: Watcher Ractor owns everything
 2. **No FD passing needed**: Spawn inside the Ractor
@@ -142,7 +142,7 @@ Based on spike findings, here's the proven architecture:
 
 ## Next Steps
 
-1. Implement `ROTP::Shellac` class based on this architecture
+1. Implement `Umi::Proctor` class based on this architecture
 2. Add timeout support using `Ractor.select` with timeout parameter
 3. Add graceful shutdown with escalating signals
 4. Add block form with automatic cleanup

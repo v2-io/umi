@@ -211,7 +211,7 @@ Build a complete process watcher with bidirectional messaging and death notifica
 | 5 | Async with internal threads (stdout_thread, death_thread) | SUCCESS |
 | 6 | `Ractor.monitor` for crash detection | SUCCESS (receives `:aborted`) |
 | 7 | `Ractor.monitor` for normal exit | SUCCESS (receives `:exited`) |
-| FINAL | Complete Shellac pattern | SUCCESS |
+| FINAL | Complete Proctor pattern | SUCCESS |
 
 ### What Worked
 
@@ -294,9 +294,9 @@ Watcher Ractor
 7. **Long-running stability** - Hours/days of operation
 8. **Memory usage** - Message queue growth, thread accumulation
 9. **Error propagation** - What happens if stdout_thread crashes?
-10. **Concurrent Shellacs** - Many watchers running simultaneously
+10. **Concurrent Proctors** - Many watchers running simultaneously
 
-## Implications for Shellac Implementation
+## Implications for Proctor Implementation
 
 1. **Process MUST be spawned inside the Ractor** - Cannot receive FDs from outside
 2. **Use Open3.popen3** - Works inside Ractors, handles all three streams

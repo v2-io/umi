@@ -321,9 +321,9 @@ rescue => e
 end
 
 # =============================================================================
-# FINAL: Complete Shellac Pattern
+# FINAL: Complete Proctor Pattern
 # =============================================================================
-section "FINAL: Complete Shellac Pattern"
+section "FINAL: Complete Proctor Pattern"
 
 begin
   main = Ractor.current
@@ -419,7 +419,7 @@ begin
   monitor_msg = Ractor.receive
   messages << [:watcher_exited, monitor_msg]
 
-  report "Complete Shellac Pattern", true, {messages: messages, final: final}.inspect
+  report "Complete Proctor Pattern", true, {messages: messages, final: final}.inspect
 
   puts
   puts "=" * 60
@@ -427,7 +427,7 @@ begin
   puts "=" * 60
 
 rescue => e
-  report "Complete Shellac Pattern", false, "#{e.class}: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+  report "Complete Proctor Pattern", false, "#{e.class}: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
 end
 
 puts
@@ -448,7 +448,7 @@ __END__
 # TEST 5: Async with internal threads              - OK
 # TEST 6: Ractor.monitor for crash detection       - OK
 # TEST 7: Ractor.monitor for normal exit           - OK
-# FINAL:  Complete Shellac Pattern                 - OK
+# FINAL:  Complete Proctor Pattern                 - OK
 #
 # WHAT WORKED:
 # - Spawning processes INSIDE Ractors with Open3.popen3 - WORKS!

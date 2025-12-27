@@ -1,10 +1,10 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Tests for ROTP::MCPClient
+# Tests for Umi::MCPClient
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'rotp/mcp_client'
+require 'umi/mcp_client'
 
 MOCK_SERVER = File.expand_path('fixtures/mcp/echo_server.rb', __dir__)
 
@@ -31,7 +31,7 @@ def assert_equal(expected, actual)
 end
 
 puts "=" * 60
-puts "ROTP::MCPClient Tests"
+puts "Umi::MCPClient Tests"
 puts "Ruby #{RUBY_VERSION}"
 puts "=" * 60
 puts
@@ -44,7 +44,7 @@ results = []
 puts "--- Lifecycle ---"
 
 results << test("start and close") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
 
   info = client.start
   assert info["name"] == "test-echo-server", "wrong server name: #{info.inspect}"
@@ -56,7 +56,7 @@ results << test("start and close") do
 end
 
 results << test("server_info and capabilities available after start") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   assert client.server_info["name"] == "test-echo-server"
@@ -72,7 +72,7 @@ end
 puts "\n--- Tools ---"
 
 results << test("list_tools returns tool definitions") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   tools = client.list_tools
@@ -87,7 +87,7 @@ results << test("list_tools returns tool definitions") do
 end
 
 results << test("call_tool with echo") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   content = client.call_tool("echo", message: "hello world")
@@ -99,7 +99,7 @@ results << test("call_tool with echo") do
 end
 
 results << test("call_tool with add") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   content = client.call_tool("add", a: 2, b: 3)
@@ -109,7 +109,7 @@ results << test("call_tool with add") do
 end
 
 results << test("multiple sequential calls") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   5.times do |i|
@@ -126,14 +126,14 @@ end
 puts "\n--- Timeouts ---"
 
 results << test("short timeout raises TimeoutError") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER, timeout: 0.1)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER, timeout: 0.1)
   client.start
 
   raised = false
   begin
     # slow tool delays for 1 second, but timeout is 0.1s
     client.call_tool("slow", delay: 1)
-  rescue ROTP::MCPClient::TimeoutError
+  rescue Umi::MCPClient::TimeoutError
     raised = true
   end
 
@@ -143,7 +143,7 @@ results << test("short timeout raises TimeoutError") do
 end
 
 results << test("per-request timeout override") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER, timeout: 0.1)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER, timeout: 0.1)
   client.start
 
   # Default would timeout, but we override
@@ -163,13 +163,13 @@ end
 puts "\n--- Errors ---"
 
 results << test("unknown method raises ServerError") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   raised = false
   begin
     client.call("nonexistent/method")
-  rescue ROTP::MCPClient::ServerError => e
+  rescue Umi::MCPClient::ServerError => e
     raised = true
     assert e.code == -32601, "expected -32601 error code"
     assert e.message.include?("not found")
@@ -181,13 +181,13 @@ results << test("unknown method raises ServerError") do
 end
 
 results << test("unknown tool raises ServerError") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   raised = false
   begin
     client.call_tool("nonexistent_tool")
-  rescue ROTP::MCPClient::ServerError => e
+  rescue Umi::MCPClient::ServerError => e
     raised = true
     assert e.message.include?("Unknown tool")
   end
@@ -198,11 +198,11 @@ results << test("unknown tool raises ServerError") do
 end
 
 results << test("server exit raises ProtocolError") do
-  client = ROTP::MCPClient.new("ruby", "-e", "puts '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'; exit 0")
+  client = Umi::MCPClient.new("ruby", "-e", "puts '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'; exit 0")
 
   # Initialize succeeds
   client.instance_variable_set(:@started, true)
-  client.instance_variable_set(:@shellac, ROTP::Shellac.new("ruby", "-e",
+  client.instance_variable_set(:@proctor, Umi::Proctor.new("ruby", "-e",
     'puts \'{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"x","version":"1"}}}\'; exit 0'))
 
   # First call works (init)
@@ -212,7 +212,7 @@ results << test("server exit raises ProtocolError") do
   raised = false
   begin
     client.call("tools/list")
-  rescue ROTP::MCPClient::ProtocolError => e
+  rescue Umi::MCPClient::ProtocolError => e
     raised = true
     assert e.message.include?("exited")
   end
@@ -226,7 +226,7 @@ end
 puts "\n--- OTP-like patterns ---"
 
 results << test("ping as heartbeat") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   # Use ping for health checking with short timeout
@@ -239,7 +239,7 @@ results << test("ping as heartbeat") do
 end
 
 results << test("concurrent clients to same server type") do
-  clients = 3.times.map { ROTP::MCPClient.new("ruby", MOCK_SERVER) }
+  clients = 3.times.map { Umi::MCPClient.new("ruby", MOCK_SERVER) }
 
   # Start all
   clients.each(&:start)
@@ -255,7 +255,7 @@ results << test("concurrent clients to same server type") do
 end
 
 results << test("rapid request/response cycle") do
-  client = ROTP::MCPClient.new("ruby", MOCK_SERVER)
+  client = Umi::MCPClient.new("ruby", MOCK_SERVER)
   client.start
 
   20.times do |i|
@@ -279,7 +279,7 @@ results << test("drain_stderr captures server debug output") do
     sleep 0.1
   RUBY
 
-  client = ROTP::MCPClient.new("ruby", "-e", server_script)
+  client = Umi::MCPClient.new("ruby", "-e", server_script)
   client.start
 
   sleep 0.1  # Let stderr arrive

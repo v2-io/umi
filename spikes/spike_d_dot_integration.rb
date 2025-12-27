@@ -3,7 +3,7 @@
 
 # Spike D: Real-world integration test with GraphViz dot
 # ======================================================
-# Uses the proven Shellac pattern from spike_c with a real tool.
+# Uses the proven Proctor pattern from spike_c with a real tool.
 # This validates that our architecture works with actual external programs.
 
 require 'open3'

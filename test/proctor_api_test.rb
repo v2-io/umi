@@ -1,14 +1,14 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Tests for the new Shellac API: pop, pop_stdout, pop_stderr, peek, output?,
+# Tests for the new Proctor API: pop, pop_stdout, pop_stderr, peek, output?,
 # Enumerable, and pattern matching idioms.
 #
 # These tests focus on the API contract and return value semantics,
 # complementing the stress tests which focus on concurrency and edge cases.
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'rotp'
+require 'umi'
 
 FIXTURES = File.expand_path('fixtures/processes', __dir__)
 
@@ -35,7 +35,7 @@ def assert_equal(expected, actual)
 end
 
 puts "=" * 60
-puts "ROTP::Shellac API Tests"
+puts "Umi::Proctor API Tests"
 puts "Ruby #{RUBY_VERSION}"
 puts "=" * 60
 puts
@@ -48,7 +48,7 @@ results = []
 puts "--- pop: unified stdout/stderr ---"
 
 results << test("pop returns [:stdout, data] for stdout") do
-  sh = ROTP::Shellac.new("cat")
+  sh = Umi::Proctor.new("cat")
   sh << "hello\n"
 
   result = sh.pop(2)
@@ -60,7 +60,7 @@ end
 
 results << test("pop returns [:stderr, data] for stderr") do
   # Use a ruby one-liner to write to stderr
-  sh = ROTP::Shellac.new("ruby", "-e", "$stderr.puts 'error msg'")
+  sh = Umi::Proctor.new("ruby", "-e", "$stderr.puts 'error msg'")
 
   result = sh.pop(2)
   assert_equal [:stderr, "error msg\n"], result
@@ -69,13 +69,13 @@ results << test("pop returns [:stderr, data] for stderr") do
 end
 
 results << test("pop returns [:closed, result] when process exits") do
-  sh = ROTP::Shellac.new("true")
+  sh = Umi::Proctor.new("true")
 
   result = sh.pop(2)
 
   case result
   in [:closed, r]
-    assert r.is_a?(ROTP::Shellac::Result), "expected Result, got #{r.class}"
+    assert r.is_a?(Umi::Proctor::Result), "expected Result, got #{r.class}"
     assert r.success?
   else
     raise "expected [:closed, result], got #{result.inspect}"
@@ -83,7 +83,7 @@ results << test("pop returns [:closed, result] when process exits") do
 end
 
 results << test("pop returns nil on timeout") do
-  sh = ROTP::Shellac.new("#{FIXTURES}/hang")
+  sh = Umi::Proctor.new("#{FIXTURES}/hang")
 
   result = sh.pop(0.1)
   assert result.nil?, "expected nil, got #{result.inspect}"
@@ -93,7 +93,7 @@ results << test("pop returns nil on timeout") do
 end
 
 results << test("pop with :forever blocks until data arrives") do
-  sh = ROTP::Shellac.new("ruby", "-e", "sleep 0.2; puts 'delayed'")
+  sh = Umi::Proctor.new("ruby", "-e", "sleep 0.2; puts 'delayed'")
 
   # This should block until the output arrives
   result = sh.pop(:forever)
@@ -103,7 +103,7 @@ results << test("pop with :forever blocks until data arrives") do
 end
 
 results << test("pop with 0 returns nil immediately when no data") do
-  sh = ROTP::Shellac.new("#{FIXTURES}/hang")
+  sh = Umi::Proctor.new("#{FIXTURES}/hang")
 
   start = Time.now
   result = sh.pop(0)
@@ -126,7 +126,7 @@ results << test("pop interleaves stdout and stderr in order") do
     $stderr.puts "err2"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   messages = []
   4.times do
@@ -143,7 +143,7 @@ results << test("pop interleaves stdout and stderr in order") do
 end
 
 results << test("pop pattern matching idiom") do
-  sh = ROTP::Shellac.new("echo", "test")
+  sh = Umi::Proctor.new("echo", "test")
 
   handled = false
   case sh.pop(2)
@@ -168,7 +168,7 @@ end
 puts "\n--- pop_stdout: stdout only ---"
 
 results << test("pop_stdout returns [:ok, data] for stdout") do
-  sh = ROTP::Shellac.new("echo", "hello")
+  sh = Umi::Proctor.new("echo", "hello")
 
   result = sh.pop_stdout(2)
   assert_equal [:ok, "hello\n"], result
@@ -177,12 +177,12 @@ results << test("pop_stdout returns [:ok, data] for stdout") do
 end
 
 results << test("pop_stdout returns [:closed, result] when process exits") do
-  sh = ROTP::Shellac.new("true")
+  sh = Umi::Proctor.new("true")
 
   result = sh.pop_stdout(2)
   case result
   in [:closed, r]
-    assert r.is_a?(ROTP::Shellac::Result)
+    assert r.is_a?(Umi::Proctor::Result)
     assert r.success?
   else
     raise "expected [:closed, result], got #{result.inspect}"
@@ -190,7 +190,7 @@ results << test("pop_stdout returns [:closed, result] when process exits") do
 end
 
 results << test("pop_stdout returns nil on timeout") do
-  sh = ROTP::Shellac.new("#{FIXTURES}/hang")
+  sh = Umi::Proctor.new("#{FIXTURES}/hang")
 
   result = sh.pop_stdout(0.1)
   assert result.nil?, "expected nil, got #{result.inspect}"
@@ -207,7 +207,7 @@ results << test("pop_stdout buffers stderr while waiting") do
     $stdout.puts "output second"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   # pop_stdout should skip stderr and return stdout
   result = sh.pop_stdout(2)
@@ -221,7 +221,7 @@ results << test("pop_stdout buffers stderr while waiting") do
 end
 
 results << test("pop_stdout with :forever blocks until stdout") do
-  sh = ROTP::Shellac.new("ruby", "-e", "sleep 0.2; puts 'stdout'")
+  sh = Umi::Proctor.new("ruby", "-e", "sleep 0.2; puts 'stdout'")
 
   result = sh.pop_stdout(:forever)
   assert_equal [:ok, "stdout\n"], result
@@ -230,7 +230,7 @@ results << test("pop_stdout with :forever blocks until stdout") do
 end
 
 results << test("pop_stdout pattern matching idiom") do
-  sh = ROTP::Shellac.new("echo", "line")
+  sh = Umi::Proctor.new("echo", "line")
 
   output = case sh.pop_stdout(2)
            in [:ok, line] then line.chomp
@@ -248,7 +248,7 @@ end
 puts "\n--- pop_stderr: stderr only ---"
 
 results << test("pop_stderr returns [:ok, data] for stderr") do
-  sh = ROTP::Shellac.new("ruby", "-e", "$stderr.puts 'error'")
+  sh = Umi::Proctor.new("ruby", "-e", "$stderr.puts 'error'")
 
   result = sh.pop_stderr(2)
   assert_equal [:ok, "error\n"], result
@@ -257,12 +257,12 @@ results << test("pop_stderr returns [:ok, data] for stderr") do
 end
 
 results << test("pop_stderr returns [:closed, result] when no stderr and process exits") do
-  sh = ROTP::Shellac.new("true")
+  sh = Umi::Proctor.new("true")
 
   result = sh.pop_stderr(2)
   case result
   in [:closed, r]
-    assert r.is_a?(ROTP::Shellac::Result)
+    assert r.is_a?(Umi::Proctor::Result)
     assert r.success?
   else
     raise "expected [:closed, result], got #{result.inspect}"
@@ -277,7 +277,7 @@ results << test("pop_stderr buffers stdout while waiting") do
     $stderr.puts "error second"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   # pop_stderr should skip stdout and return stderr
   result = sh.pop_stderr(2)
@@ -296,7 +296,7 @@ end
 puts "\n--- Raising variants (!) ---"
 
 results << test("pop! returns data on success") do
-  sh = ROTP::Shellac.new("echo", "test")
+  sh = Umi::Proctor.new("echo", "test")
 
   result = sh.pop!(2)
   assert_equal [:stdout, "test\n"], result
@@ -305,12 +305,12 @@ results << test("pop! returns data on success") do
 end
 
 results << test("pop! raises Timeout on timeout") do
-  sh = ROTP::Shellac.new("#{FIXTURES}/hang")
+  sh = Umi::Proctor.new("#{FIXTURES}/hang")
 
   raised = false
   begin
     sh.pop!(0.1)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised = true
   end
 
@@ -321,12 +321,12 @@ results << test("pop! raises Timeout on timeout") do
 end
 
 results << test("pop! raises ProcessExited when closed") do
-  sh = ROTP::Shellac.new("true")
+  sh = Umi::Proctor.new("true")
 
   raised = false
   begin
     sh.pop!(2)
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     raised = true
   end
 
@@ -334,7 +334,7 @@ results << test("pop! raises ProcessExited when closed") do
 end
 
 results << test("pop_stdout! returns just the data (not tagged)") do
-  sh = ROTP::Shellac.new("echo", "data")
+  sh = Umi::Proctor.new("echo", "data")
 
   result = sh.pop_stdout!(2)
   assert_equal "data\n", result  # String, not tuple
@@ -343,7 +343,7 @@ results << test("pop_stdout! returns just the data (not tagged)") do
 end
 
 results << test("pop_stderr! returns just the data (not tagged)") do
-  sh = ROTP::Shellac.new("ruby", "-e", "$stderr.puts 'err'")
+  sh = Umi::Proctor.new("ruby", "-e", "$stderr.puts 'err'")
 
   result = sh.pop_stderr!(2)
   assert_equal "err\n", result  # String, not tuple
@@ -357,7 +357,7 @@ end
 puts "\n--- peek and output? ---"
 
 results << test("peek returns next message without consuming") do
-  sh = ROTP::Shellac.new("echo", "peek-test")
+  sh = Umi::Proctor.new("echo", "peek-test")
 
   # Give it a moment for output to arrive
   sleep 0.1
@@ -374,7 +374,7 @@ results << test("peek returns next message without consuming") do
 end
 
 results << test("peek returns nil when no data available") do
-  sh = ROTP::Shellac.new("#{FIXTURES}/hang")
+  sh = Umi::Proctor.new("#{FIXTURES}/hang")
 
   result = sh.peek
   assert result.nil?, "expected nil, got #{result.inspect}"
@@ -384,7 +384,7 @@ results << test("peek returns nil when no data available") do
 end
 
 results << test("output? returns true when data waiting") do
-  sh = ROTP::Shellac.new("echo", "output")
+  sh = Umi::Proctor.new("echo", "output")
   sleep 0.1  # Let output arrive
 
   assert sh.output?, "expected output? to be true"
@@ -394,7 +394,7 @@ results << test("output? returns true when data waiting") do
 end
 
 results << test("output? returns false when no data") do
-  sh = ROTP::Shellac.new("#{FIXTURES}/hang")
+  sh = Umi::Proctor.new("#{FIXTURES}/hang")
 
   assert !sh.output?, "expected output? to be false"
 
@@ -408,7 +408,7 @@ end
 puts "\n--- Enumerable/Enumerator ---"
 
 results << test("each iterates over stdout lines") do
-  sh = ROTP::Shellac.new("ruby", "-e", "3.times { |i| puts i }")
+  sh = Umi::Proctor.new("ruby", "-e", "3.times { |i| puts i }")
 
   lines = []
   sh.each do |line|
@@ -419,7 +419,7 @@ results << test("each iterates over stdout lines") do
 end
 
 results << test("each without block returns Enumerator") do
-  sh = ROTP::Shellac.new("echo", "enum")
+  sh = Umi::Proctor.new("echo", "enum")
 
   enum = sh.each
   assert enum.is_a?(Enumerator), "expected Enumerator, got #{enum.class}"
@@ -431,7 +431,7 @@ results << test("each without block returns Enumerator") do
 end
 
 results << test("next returns stdout data") do
-  sh = ROTP::Shellac.new("echo", "next-test")
+  sh = Umi::Proctor.new("echo", "next-test")
 
   line = sh.next
   assert_equal "next-test\n", line
@@ -440,7 +440,7 @@ results << test("next returns stdout data") do
 end
 
 results << test("next raises StopIteration when closed") do
-  sh = ROTP::Shellac.new("true")  # Exits immediately with no output
+  sh = Umi::Proctor.new("true")  # Exits immediately with no output
 
   raised = false
   begin
@@ -453,7 +453,7 @@ results << test("next raises StopIteration when closed") do
 end
 
 results << test("Enumerable#take works") do
-  sh = ROTP::Shellac.new("ruby", "-e", "5.times { |i| puts i }")
+  sh = Umi::Proctor.new("ruby", "-e", "5.times { |i| puts i }")
 
   lines = sh.take(3).map(&:chomp)
   assert_equal ["0", "1", "2"], lines
@@ -462,21 +462,21 @@ results << test("Enumerable#take works") do
 end
 
 results << test("Enumerable#map works") do
-  sh = ROTP::Shellac.new("ruby", "-e", "3.times { |i| puts i }")
+  sh = Umi::Proctor.new("ruby", "-e", "3.times { |i| puts i }")
 
   doubled = sh.map { |line| line.chomp.to_i * 2 }
   assert_equal [0, 2, 4], doubled
 end
 
 results << test("Enumerable#select works") do
-  sh = ROTP::Shellac.new("ruby", "-e", "5.times { |i| puts i }")
+  sh = Umi::Proctor.new("ruby", "-e", "5.times { |i| puts i }")
 
   evens = sh.select { |line| line.chomp.to_i.even? }.map(&:chomp)
   assert_equal ["0", "2", "4"], evens
 end
 
 results << test("lazy enumeration works") do
-  sh = ROTP::Shellac.new("ruby", "-e", "10.times { |i| puts i }")
+  sh = Umi::Proctor.new("ruby", "-e", "10.times { |i| puts i }")
 
   # Lazy should only consume what's needed
   lines = sh.lazy.take(3).force.map(&:chomp)
@@ -493,7 +493,7 @@ results << test("each_output iterates over both stdout and stderr") do
     $stderr.puts "err"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   outputs = []
   sh.each_output(timeout: 2) do |type, line|
@@ -505,7 +505,7 @@ results << test("each_output iterates over both stdout and stderr") do
 end
 
 results << test("each_output without block returns Enumerator") do
-  sh = ROTP::Shellac.new("echo", "test")
+  sh = Umi::Proctor.new("echo", "test")
 
   enum = sh.each_output(timeout: 2)
   assert enum.is_a?(Enumerator), "expected Enumerator"
@@ -529,7 +529,7 @@ results << test("pop then pop_stdout uses buffered data") do
     puts "line2"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   # pop gets first line as [:stdout, ...]
   first = sh.pop(2)
@@ -549,7 +549,7 @@ results << test("mixing pop and pop_stderr respects buffer") do
     $stderr.puts "err2"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   # pop gets first as [:stderr, ...]
   first = sh.pop(2)
@@ -564,7 +564,7 @@ end
 
 results << test("pop correctly handles fast process") do
   # Process exits immediately after output
-  sh = ROTP::Shellac.new("echo", "fast")
+  sh = Umi::Proctor.new("echo", "fast")
 
   # Should get the output, not miss it
   result = sh.pop(2)
@@ -581,7 +581,7 @@ results << test("pop correctly handles fast process") do
 end
 
 results << test("multiple pops after process exits drain buffer") do
-  sh = ROTP::Shellac.new("ruby", "-e", "3.times { |i| puts i }")
+  sh = Umi::Proctor.new("ruby", "-e", "3.times { |i| puts i }")
 
   # Wait for process to complete
   sleep 0.3
@@ -607,7 +607,7 @@ results << test("pop_stdout after pop that saw stderr") do
     puts "out"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
   sleep 0.1
 
   # pop gets stderr first (whichever arrives)
@@ -635,7 +635,7 @@ results << test("stderr: :merge option makes all output come as :stdout") do
     puts "out"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script, stderr: :merge)
+  sh = Umi::Proctor.new("ruby", "-e", script, stderr: :merge)
 
   # Both should come as :stdout via pop
   messages = []
@@ -660,7 +660,7 @@ end
 puts "\n--- OTP-like patterns ---"
 
 results << test("polling: non-blocking check with 0 timeout") do
-  sh = ROTP::Shellac.new("cat")
+  sh = Umi::Proctor.new("cat")
 
   # Non-blocking check - nothing available yet
   case sh.pop_stdout(0)
@@ -690,7 +690,7 @@ results << test("polling: non-blocking check with 0 timeout") do
 end
 
 results << test("request-response: send and wait for reply") do
-  sh = ROTP::Shellac.new("cat")
+  sh = Umi::Proctor.new("cat")
 
   # Request-response pattern with timeout
   sh << "request1\n"
@@ -728,7 +728,7 @@ results << test("heartbeat: timeout triggers action") do
     end
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   heartbeats = 0
   timeouts = 0
@@ -754,7 +754,7 @@ end
 
 results << test("graceful degradation: fallback on timeout") do
   # Slow process
-  sh = ROTP::Shellac.new("ruby", "-e", "sleep 0.3; puts 'slow'")
+  sh = Umi::Proctor.new("ruby", "-e", "sleep 0.3; puts 'slow'")
 
   # Try fast path first
   result = case sh.pop_stdout(0.05)
@@ -778,7 +778,7 @@ end
 
 results << test("retry with backoff on timeout") do
   # Process that outputs after delay
-  sh = ROTP::Shellac.new("ruby", "-e", "sleep 0.2; puts 'delayed'")
+  sh = Umi::Proctor.new("ruby", "-e", "sleep 0.2; puts 'delayed'")
 
   attempts = 0
   success = false
@@ -810,7 +810,7 @@ results << test("deadline: overall timeout with per-message polls") do
     5.times { |i| sleep 0.05; puts i }
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   deadline = Time.now + 0.5
   lines = []
@@ -842,7 +842,7 @@ results << test("selective receive: filter message types") do
     $stderr.puts "noise2"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
   sleep 0.1  # Let messages arrive
 
   # Want stdout specifically, ignore stderr
@@ -872,7 +872,7 @@ results << test("collect with timeout: gather available messages") do
     puts "final"
   RUBY
 
-  sh = ROTP::Shellac.new("ruby", "-e", script)
+  sh = Umi::Proctor.new("ruby", "-e", script)
 
   # Collect messages until timeout (short window)
   collected = []
@@ -896,7 +896,7 @@ results << test("collect with timeout: gather available messages") do
 end
 
 results << test("interleaved conversation with timeouts") do
-  sh = ROTP::Shellac.new("cat")
+  sh = Umi::Proctor.new("cat")
 
   # Simulate multi-turn conversation
   conversation = []
@@ -924,7 +924,7 @@ end
 
 results << test("Result inspection after :closed") do
   # Process with specific exit code
-  sh = ROTP::Shellac.new("ruby", "-e", "puts 'output'; exit 42")
+  sh = Umi::Proctor.new("ruby", "-e", "puts 'output'; exit 42")
 
   # Get output
   case sh.pop_stdout(2)
@@ -946,7 +946,7 @@ results << test("Result inspection after :closed") do
 end
 
 results << test("signal Result inspection") do
-  sh = ROTP::Shellac.new("sleep", "100")
+  sh = Umi::Proctor.new("sleep", "100")
   sh.kill(:TERM)
 
   # Wait for close

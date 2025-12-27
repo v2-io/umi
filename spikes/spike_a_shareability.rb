@@ -1,5 +1,5 @@
 # spike_a_shareability.rb
-# Exploring what objects can cross Ractor boundaries for Shellac
+# Exploring what objects can cross Ractor boundaries for Proctor
 # Ruby 4.0 Ractor shareability spike
 #
 # NOTE: Ruby 4.0 changed the Ractor API significantly:
@@ -630,7 +630,7 @@ puts "=" * 60
 #    - Each side creates own Port (its inbox)
 #    - Exchange Port references via messages
 #    - Each can send to other's inbox, receive from own inbox
-# 5. Shellac design pattern:
+# 5. Proctor design pattern:
 #    - Main creates worker Ractor
 #    - Main spawns subprocess with pipes
 #    - Main sends pipes to worker via Port#send(pipe, move:true)

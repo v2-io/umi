@@ -1,5 +1,5 @@
 # Spike B: Exploring Ractor.select in Ruby 4.0
-# Goal: Understand multiplexing semantics for Shellac's receive(timeout:)
+# Goal: Understand multiplexing semantics for Proctor's receive(timeout:)
 
 puts "=" * 60
 puts "SPIKE B: Ractor.select Exploration"
@@ -473,7 +473,7 @@ puts "=" * 60
 #    - Must filter out closed ports before calling select
 #    - Or catch ClosedError and retry without the closed port
 #
-# 4. Pattern for Shellac receive(timeout:):
+# 4. Pattern for Proctor receive(timeout:):
 #    ```ruby
 #    def receive(timeout: nil)
 #      ports_to_select = [inbox_port]

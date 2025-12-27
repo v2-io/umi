@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 require 'json'
-require_relative 'shellac'
+require_relative 'proctor'
 
-module ROTP
-  # Minimal MCP (Model Context Protocol) client using Shellac.
+module Umi
+  # Minimal MCP (Model Context Protocol) client using Proctor.
   #
   # MCP uses JSON-RPC 2.0 over stdio. Each message is a single line of JSON.
   #
   # @example
-  #   client = ROTP::MCPClient.new("npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
+  #   client = Umi::MCPClient.new("npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
   #   client.start
   #
   #   tools = client.call("tools/list")
@@ -49,7 +49,7 @@ module ROTP
       @cmd = cmd
       @args = args
       @default_timeout = timeout
-      @shellac = nil
+      @proctor = nil
       @request_id = 0
       @server_info = nil
       @server_capabilities = nil
@@ -62,7 +62,7 @@ module ROTP
     def start
       raise "Already started" if @started
 
-      @shellac = Shellac.new(@cmd, *@args, stderr: :separate)
+      @proctor = Proctor.new(@cmd, *@args, stderr: :separate)
       @started = true
 
       # MCP initialization handshake
@@ -70,7 +70,7 @@ module ROTP
         protocolVersion: PROTOCOL_VERSION,
         capabilities: CLIENT_CAPABILITIES,
         clientInfo: {
-          name: "rotp-mcp-client",
+          name: "umi-mcp-client",
           version: "0.1.0"
         }
       })
@@ -181,19 +181,19 @@ module ROTP
     #
     # @return [Boolean]
     def alive?
-      @shellac&.alive? || false
+      @proctor&.alive? || false
     end
 
     # Close the MCP connection.
     #
-    # @return [Shellac::Result]
+    # @return [Proctor::Result]
     def close
-      return nil unless @shellac
+      return nil unless @proctor
 
-      @shellac.close_stdin
-      @shellac.join(timeout: 5)
-    rescue Shellac::Timeout
-      @shellac.stop(timeout: 2)
+      @proctor.close_stdin
+      @proctor.join(timeout: 5)
+    rescue Proctor::Timeout
+      @proctor.stop(timeout: 2)
     end
 
     # Get any stderr output from the server (for debugging).
@@ -202,7 +202,7 @@ module ROTP
     def drain_stderr
       lines = []
       loop do
-        case @shellac.pop_stderr(0)
+        case @proctor.pop_stderr(0)
         in [:ok, line]
           lines << line
         in nil | [:closed, _]
@@ -220,7 +220,7 @@ module ROTP
 
     def send_message(msg)
       json = JSON.dump(msg)
-      @shellac.puts(json)
+      @proctor.puts(json)
     end
 
     def receive_response(expected_id, timeout:)
@@ -230,7 +230,7 @@ module ROTP
         remaining = deadline - Time.now
         raise TimeoutError, "Request timed out after #{timeout}s" if remaining <= 0
 
-        case @shellac.pop_stdout(remaining)
+        case @proctor.pop_stdout(remaining)
         in [:ok, line]
           msg = parse_message(line)
 

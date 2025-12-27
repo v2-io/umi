@@ -2,8 +2,8 @@
 
 require 'open3'
 
-module ROTP
-  # Shellac wraps a long-lived external process as a Ractor-citizen.
+module Umi
+  # Proctor wraps a long-lived external process as a Ractor-citizen.
   #
   # Key properties:
   # - Bidirectional messaging (stdin/stdout as send/receive)
@@ -11,7 +11,8 @@ module ROTP
   # - Isolation (process crashes become messages, not Ruby crashes)
   # - OTP-style tagged tuples for pattern matching
   #
-  # The name: Shell + Actor, or shellac (a protective coating).
+  # The name: from Latin "procurator" - one who manages on behalf of another.
+  # A Proctor supervises and manages an external process lifecycle.
   #
   # ## Primary API
   #
@@ -24,7 +25,7 @@ module ROTP
   # - `pop!`, `pop_stdout!`, `pop_stderr!` → raising versions (for simple scripts)
   #
   # @example Basic usage with pattern matching
-  #   sh = ROTP::Shellac.new("cat")
+  #   sh = Umi::Proctor.new("cat")
   #   sh << "hello\n"
   #
   #   case sh.pop_stdout(2)
@@ -49,7 +50,7 @@ module ROTP
   #   end
   #
   # @example Enumerable iteration
-  #   sh = ROTP::Shellac.new("ls", "-la")
+  #   sh = Umi::Proctor.new("ls", "-la")
   #   sh.each { |line| puts line }
   #
   #   # Or with Enumerable methods:
@@ -57,13 +58,13 @@ module ROTP
   #   sh.lazy.select { |l| l.include?("rb") }.first(3)
   #
   # @example Simple script (raising API)
-  #   sh = ROTP::Shellac.new("cat")
+  #   sh = Umi::Proctor.new("cat")
   #   sh << "hello\n"
   #   puts sh.pop_stdout!  # raises Timeout or ProcessExited on failure
   #   sh.close_stdin
   #   sh.join
   #
-  class Shellac
+  class Proctor
     include Enumerable
 
     # Raised when a receive times out
@@ -97,37 +98,37 @@ module ROTP
 
       def inspect
         status = signaled? ? "signal=#{signal}" : "exit=#{exit_code}"
-        "#<ROTP::Shellac::Result pid=#{pid} #{status} duration=#{duration.round(3)}s>"
+        "#<Umi::Proctor::Result pid=#{pid} #{status} duration=#{duration.round(3)}s>"
       end
     end
 
     attr_reader :pid
 
-    # Open a Shellac, yield it, and ensure cleanup.
+    # Open a Proctor, yield it, and ensure cleanup.
     #
     # @param cmd [String] The command to run
     # @param args [Array<String>] Arguments
     # @param opts [Hash] Options (see #initialize)
-    # @yield [Shellac] The shellac instance
+    # @yield [Proctor] The proctor instance
     # @return [Result] The process result
     def self.open(cmd, *args, **opts)
-      shellac = new(cmd, *args, **opts)
+      proctor = new(cmd, *args, **opts)
       begin
-        yield shellac
+        yield proctor
       ensure
-        if shellac.alive?
+        if proctor.alive?
           # Give process a moment to exit naturally, then force stop
           begin
-            shellac.join(timeout: 0.5)
+            proctor.join(timeout: 0.5)
           rescue Timeout
-            shellac.stop(timeout: 2.0)
+            proctor.stop(timeout: 2.0)
           end
         end
       end
-      shellac.result || shellac.join(timeout: 1.0)
+      proctor.result || proctor.join(timeout: 1.0)
     end
 
-    # Create a new Shellac wrapping the given command.
+    # Create a new Proctor wrapping the given command.
     #
     # @param cmd [String] The command to run
     # @param args [Array<String>] Arguments to the command
@@ -605,7 +606,7 @@ module ROTP
 
     def inspect
       status = @exited ? "exited" : "running pid=#{@pid}"
-      "#<ROTP::Shellac #{@cmd} #{status}>"
+      "#<Umi::Proctor #{@cmd} #{status}>"
     end
 
     private

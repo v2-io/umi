@@ -5,12 +5,12 @@
 # These test how the client handles misbehaving servers.
 #
 # Failures here help us understand which layer needs work:
-# - Shellac (process/IO handling)
+# - Proctor (process/IO handling)
 # - JSON-RPC (message framing/parsing)
 # - MCP client (protocol handling)
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'rotp/mcp_client'
+require 'umi/mcp_client'
 
 CHAOS_SERVER = File.expand_path('fixtures/mcp/chaos_server.rb', __dir__)
 
@@ -34,7 +34,7 @@ end
 
 # Create client, run test, ensure cleanup
 def with_chaos_client(timeout: 5)
-  client = ROTP::MCPClient.new("ruby", CHAOS_SERVER, timeout: timeout)
+  client = Umi::MCPClient.new("ruby", CHAOS_SERVER, timeout: timeout)
   begin
     client.start
     yield client
@@ -64,7 +64,7 @@ results << test("normal tool call works") do
 end
 
 # =============================================================================
-# Timeout handling (Shellac + JSON-RPC layer)
+# Timeout handling (Proctor + JSON-RPC layer)
 # =============================================================================
 puts "\n--- Timeout handling ---"
 
@@ -80,7 +80,7 @@ results << test("slow response with short timeout fails gracefully") do
     raised = false
     begin
       client.call_tool("slow", delay: 2)
-    rescue ROTP::MCPClient::TimeoutError
+    rescue Umi::MCPClient::TimeoutError
       raised = true
     end
     assert raised, "expected TimeoutError"
@@ -98,10 +98,10 @@ results << test("garbage response raises ProtocolError") do
     error_type = nil
     begin
       client.call_tool("garbage")
-    rescue ROTP::MCPClient::ProtocolError => e
+    rescue Umi::MCPClient::ProtocolError => e
       raised = true
       error_type = :protocol
-    rescue ROTP::MCPClient::TimeoutError
+    rescue Umi::MCPClient::TimeoutError
       # Also acceptable - we might timeout waiting for valid response
       raised = true
       error_type = :timeout
@@ -125,7 +125,7 @@ results << test("truncated JSON times out") do
     raised = false
     begin
       client.call_tool("truncated")
-    rescue ROTP::MCPClient::TimeoutError
+    rescue Umi::MCPClient::TimeoutError
       raised = true
     end
     assert raised, "expected TimeoutError"
@@ -137,7 +137,7 @@ results << test("wrong JSON structure is handled") do
     raised = false
     begin
       client.call_tool("wrong_structure")
-    rescue ROTP::MCPClient::TimeoutError, ROTP::MCPClient::ProtocolError
+    rescue Umi::MCPClient::TimeoutError, Umi::MCPClient::ProtocolError
       # Either timeout (waiting for real response) or protocol error
       raised = true
     end
@@ -150,7 +150,7 @@ results << test("binary garbage is handled") do
     raised = false
     begin
       client.call_tool("binary")
-    rescue ROTP::MCPClient::TimeoutError, ROTP::MCPClient::ProtocolError
+    rescue Umi::MCPClient::TimeoutError, Umi::MCPClient::ProtocolError
       raised = true
     end
     assert raised, "expected error"
@@ -167,7 +167,7 @@ results << test("wrong ID response times out") do
     raised = false
     begin
       client.call_tool("wrong_id")
-    rescue ROTP::MCPClient::TimeoutError
+    rescue Umi::MCPClient::TimeoutError
       raised = true
     end
     assert raised, "expected TimeoutError (response had wrong ID)"
@@ -194,7 +194,7 @@ results << test("notification spam doesn't break response") do
 end
 
 # =============================================================================
-# Server crashes (Shellac layer)
+# Server crashes (Proctor layer)
 # =============================================================================
 puts "\n--- Server crashes ---"
 
@@ -203,7 +203,7 @@ results << test("server crash mid-response raises error") do
     raised = false
     begin
       client.call_tool("crash")
-    rescue ROTP::MCPClient::ProtocolError, ROTP::MCPClient::TimeoutError
+    rescue Umi::MCPClient::ProtocolError, Umi::MCPClient::TimeoutError
       # Either protocol error (detected exit) or timeout (waiting for response)
       raised = true
     end
@@ -216,7 +216,7 @@ results << test("server silent exit raises ProtocolError") do
     raised = false
     begin
       client.call_tool("exit_silent")
-    rescue ROTP::MCPClient::ProtocolError => e
+    rescue Umi::MCPClient::ProtocolError => e
       raised = true
     end
     assert raised, "expected ProtocolError"
@@ -224,7 +224,7 @@ results << test("server silent exit raises ProtocolError") do
 end
 
 # =============================================================================
-# Large responses (Shellac I/O handling)
+# Large responses (Proctor I/O handling)
 # =============================================================================
 puts "\n--- Large responses ---"
 
@@ -252,7 +252,7 @@ results << test("error response raises ServerError") do
     raised = false
     begin
       client.call_tool("error", code: -32000, message: "test error")
-    rescue ROTP::MCPClient::ServerError => e
+    rescue Umi::MCPClient::ServerError => e
       raised = true
       assert e.code == -32000
       assert e.message == "test error"
@@ -300,7 +300,7 @@ results << test("client works after timeout") do
     # First call times out
     begin
       client.call_tool("slow", delay: 10)
-    rescue ROTP::MCPClient::TimeoutError
+    rescue Umi::MCPClient::TimeoutError
       # Expected
     end
 
@@ -310,7 +310,7 @@ results << test("client works after timeout") do
     raised = false
     begin
       client.call_tool("normal")
-    rescue ROTP::MCPClient::TimeoutError, ROTP::MCPClient::ProtocolError
+    rescue Umi::MCPClient::TimeoutError, Umi::MCPClient::ProtocolError
       raised = true
     end
     # Either works or errors - both are acceptable for "recovery"
@@ -319,7 +319,7 @@ results << test("client works after timeout") do
 end
 
 results << test("multiple chaos clients concurrently") do
-  clients = 5.times.map { ROTP::MCPClient.new("ruby", CHAOS_SERVER, timeout: 5) }
+  clients = 5.times.map { Umi::MCPClient.new("ruby", CHAOS_SERVER, timeout: 5) }
 
   begin
     clients.each(&:start)

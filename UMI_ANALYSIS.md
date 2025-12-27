@@ -1,4 +1,4 @@
-# ROTP: Ruby OTP - Building Actor Infrastructure on Ruby 4.0
+# Umi: Ruby OTP - Building Actor Infrastructure on Ruby 4.0
 
 ## Executive Summary
 
@@ -115,8 +115,8 @@ end
 This is where we wrap the functional core in Ractor-based servers.
 
 ```ruby
-# ROTP GenServer equivalent
-module ROTP
+# Umi GenServer equivalent
+module Umi
   class GenServer
     # Callbacks the user implements:
     # - init(args) -> {:ok, state} | {:stop, reason}
@@ -212,7 +212,7 @@ We must build it ourselves using a supervisory Ractor that polls or receives
 exit notifications.
 
 ```ruby
-module ROTP
+module Umi
   class Supervisor
     STRATEGIES = {
       one_for_one: :one_for_one,      # Only restart failed child
@@ -285,7 +285,7 @@ end
 OTP has several registry mechanisms. For Ruby, we need:
 
 ```ruby
-module ROTP
+module Umi
   class Registry
     # Global registry is itself a Ractor
     @registry_port = nil
@@ -328,15 +328,15 @@ end
 Following the OTP book's `Application` pattern:
 
 ```ruby
-module ROTP
+module Umi
   class Application
     def self.start
       # Start the root supervisor
       children = [
-        ROTP::Registry.child_spec,
+        Umi::Registry.child_spec,
         # ... other core services
       ]
-      ROTP::Supervisor.start_link(children, strategy: :one_for_one)
+      Umi::Supervisor.start_link(children, strategy: :one_for_one)
     end
   end
 end
@@ -347,7 +347,7 @@ end
 OTP's Task is useful for fire-and-forget or await patterns:
 
 ```ruby
-module ROTP
+module Umi
   class Task
     def self.async(callable)
       reply_port = Ractor::Port.new
@@ -424,30 +424,30 @@ Without native linking, we need careful design.
 
 ## Part 5: Implementation Roadmap
 
-### Phase 1: Shellac (Current Focus)
+### Phase 1: Proctor (Current Focus)
 
 Before building internal Ractor abstractions, we're starting with external process
-management. **Shellac** wraps a long-lived OS process as a Ractor-citizen with
+management. **Proctor** wraps a long-lived OS process as a Ractor-citizen with
 bidirectional messaging and death notification. This solves the "liveness detection"
 problem in a concrete, testable context.
 
-See: `phase-1-pilot-shellac.md` and `ROTP_FIRST_PRINCIPLES.md`
+See: `phase-1-pilot-shellac.md` and `Umi_FIRST_PRINCIPLES.md`
 
 ### Phase 2: Core Primitives
-- [ ] `ROTP::GenServer` - Basic call/cast/info pattern
-- [ ] `ROTP::Registry` - Simple name registration
-- [ ] Apply Shellac patterns to Ractor supervision
+- [ ] `Umi::GenServer` - Basic call/cast/info pattern
+- [ ] `Umi::Registry` - Simple name registration
+- [ ] Apply Proctor patterns to Ractor supervision
 - [ ] Basic tests demonstrating the pattern
 
 ### Phase 3: Supervision
-- [ ] `ROTP::Supervisor` - one_for_one strategy
+- [ ] `Umi::Supervisor` - one_for_one strategy
 - [ ] Child specifications
 - [ ] Restart counting and max_restarts
 
 ### Phase 4: Extended Patterns
-- [ ] `ROTP::DynamicSupervisor` - Runtime child spawning
-- [ ] `ROTP::Task` - Async/await pattern
-- [ ] `ROTP::Application` - Lifecycle management
+- [ ] `Umi::DynamicSupervisor` - Runtime child spawning
+- [ ] `Umi::Task` - Async/await pattern
+- [ ] `Umi::Application` - Lifecycle management
 
 ### Phase 5: Production Hardening
 - [ ] Timeout handling throughout
@@ -459,14 +459,14 @@ See: `phase-1-pilot-shellac.md` and `ROTP_FIRST_PRINCIPLES.md`
 
 ## Part 6: Example Usage (Vision)
 
-Following the OTP book's Mastery example, here's how ROTP would look:
+Following the OTP book's Mastery example, here's how Umi would look:
 
 ```ruby
 # lib/mastery/boundary/quiz_manager.rb
 module Mastery
   module Boundary
     class QuizManager
-      include ROTP::GenServer
+      include Umi::GenServer
 
       def init(_args)
         [:ok, {}]  # Initial state: empty quiz map
@@ -488,17 +488,17 @@ module Mastery
 
       # Client API
       def self.build_quiz(fields)
-        ROTP::GenServer.call(whereis(:quiz_manager), [:build_quiz, fields])
+        Umi::GenServer.call(whereis(:quiz_manager), [:build_quiz, fields])
       end
 
       def self.lookup(title)
-        ROTP::GenServer.call(whereis(:quiz_manager), [:lookup, title])
+        Umi::GenServer.call(whereis(:quiz_manager), [:lookup, title])
       end
 
       private
 
       def self.whereis(name)
-        ROTP::Registry.whereis(name)
+        Umi::Registry.whereis(name)
       end
     end
   end
@@ -512,7 +512,7 @@ module Mastery
         { id: :quiz_manager,
           start: -> { QuizManager.start_link(name: :quiz_manager) } }
       ]
-      ROTP::Supervisor.start_link(children, strategy: :one_for_one)
+      Umi::Supervisor.start_link(children, strategy: :one_for_one)
     end
   end
 end

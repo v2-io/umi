@@ -1,16 +1,16 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Stress tests for ROTP::Shellac
+# Stress tests for Umi::Proctor
 # These probe edge cases and race conditions that could break the implementation.
 #
 # Reproducibility:
-#   SEED=12345 ruby test/shellac_stress_test.rb  # Reproduce a specific run
+#   SEED=12345 ruby test/proctor_stress_test.rb  # Reproduce a specific run
 #
 # The seed is printed at startup so failures can be reproduced.
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'rotp'
+require 'umi'
 
 # Reproducible randomness
 SEED = (ENV['SEED'] || Random.new_seed).to_i
@@ -70,7 +70,7 @@ def assert_equal(expected, actual)
 end
 
 puts "=" * 60
-puts "ROTP::Shellac Stress Tests"
+puts "Umi::Proctor Stress Tests"
 puts "Ruby #{RUBY_VERSION}"
 puts "SEED=#{SEED}  (use SEED=#{SEED} to reproduce)"
 puts "=" * 60
@@ -86,7 +86,7 @@ puts "--- Spawn Failures ---"
 results << test("command not found") do
   raised = false
   begin
-    shellac = ROTP::Shellac.new("nonexistent_command_xyz_123")
+    shellac = Umi::Proctor.new("nonexistent_command_xyz_123")
     # The watcher should still start, but process spawn fails
     # We should get an error when we try to interact
     shellac.join(timeout: 2.0)
@@ -105,7 +105,7 @@ results << test("permission denied (non-executable)") do
   File.chmod(0644, tmp)  # readable but not executable
 
   begin
-    shellac = ROTP::Shellac.new(tmp)
+    shellac = Umi::Proctor.new(tmp)
     result = shellac.join(timeout: 2.0)
     # Should fail with non-zero exit or error
   rescue => e
@@ -123,15 +123,15 @@ puts "\n--- Rapid Lifecycle ---"
 
 results << test("50 rapid create/destroy cycles") do
   50.times do |i|
-    shellac = ROTP::Shellac.new("true")
+    shellac = Umi::Proctor.new("true")
     result = shellac.join(timeout: 2.0)
     raise "iteration #{i} failed" unless result.success?
   end
 end
 
-results << test("10 concurrent Shellacs") do
+results << test("10 concurrent Proctors") do
   shellacs = 10.times.map do |i|
-    s = ROTP::Shellac.new("cat")
+    s = Umi::Proctor.new("cat")
     s << "msg#{i}\n"
     s
   end
@@ -147,10 +147,10 @@ results << test("10 concurrent Shellacs") do
   assert join_results.all?(&:success?)
 end
 
-results << test("create new Shellac while previous still cleaning up") do
+results << test("create new Proctor while previous still cleaning up") do
   # Don't wait for join - just close and move on
   20.times do |i|
-    shellac = ROTP::Shellac.new("echo", "hi")
+    shellac = Umi::Proctor.new("echo", "hi")
     shellac.pop_stdout!(1.0)
     # Don't join - let GC handle it
   end
@@ -158,7 +158,7 @@ results << test("create new Shellac while previous still cleaning up") do
   sleep 0.5
 
   # Now create one more and verify it works
-  final = ROTP::Shellac.new("echo", "final")
+  final = Umi::Proctor.new("echo", "final")
   line = final.pop_stdout!(1.0)
   assert_equal "final\n", line
   final.join(timeout: 1.0)
@@ -171,7 +171,7 @@ puts "\n--- I/O Edge Cases ---"
 
 results << test("large output (1MB)") do
   # Generate 1MB of output
-  shellac = ROTP::Shellac.new("ruby", "-e", "puts 'x' * 1024 * 1024")
+  shellac = Umi::Proctor.new("ruby", "-e", "puts 'x' * 1024 * 1024")
 
   total = 0
   shellac.each_line(timeout: 10.0) do |line|
@@ -184,7 +184,7 @@ end
 
 results << test("binary data with null bytes") do
   # Send binary data through
-  shellac = ROTP::Shellac.new("cat")
+  shellac = Umi::Proctor.new("cat")
   binary = (0..255).to_a.pack("C*")  # All byte values
   shellac << binary
   shellac.close_stdin
@@ -200,7 +200,7 @@ results << test("binary data with null bytes") do
 end
 
 results << test("no newline in output") do
-  shellac = ROTP::Shellac.new("ruby", "-e", "print 'no newline'")
+  shellac = Umi::Proctor.new("ruby", "-e", "print 'no newline'")
 
   output = +""  # Mutable string
   shellac.each_line(timeout: 2.0) do |chunk|
@@ -211,19 +211,19 @@ results << test("no newline in output") do
 end
 
 results << test("empty output then exit") do
-  shellac = ROTP::Shellac.new("true")  # Produces no output
+  shellac = Umi::Proctor.new("true")  # Produces no output
   result = shellac.join(timeout: 2.0)
   assert result.success?
 end
 
 results << test("output only on stderr") do
-  shellac = ROTP::Shellac.new("ruby", "-e", "$stderr.puts 'error only'")
+  shellac = Umi::Proctor.new("ruby", "-e", "$stderr.puts 'error only'")
 
   # pop_stdout! should timeout or raise since no stdout
   raised = false
   begin
     shellac.pop_stdout!(0.5)
-  rescue ROTP::Shellac::Timeout, ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
     raised = true
   end
 
@@ -247,7 +247,7 @@ results << test("rapid stdout/stderr alternation") do
     end
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   stdout_count = 0
   stderr_count = 0
@@ -271,7 +271,7 @@ results << test("many stderr before stdout (buffer stress)") do
     puts "finally stdout"
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # This should not hang - the fix should handle buffering correctly
   line = shellac.pop_stdout!(5.0)
@@ -286,13 +286,13 @@ end
 puts "\n--- Process Death Scenarios ---"
 
 results << test("process dies immediately") do
-  shellac = ROTP::Shellac.new("false")  # Exits immediately with code 1
+  shellac = Umi::Proctor.new("false")  # Exits immediately with code 1
   result = shellac.join(timeout: 2.0)
   assert_equal 1, result.exit_code
 end
 
 results << test("process killed by signal during operation") do
-  shellac = ROTP::Shellac.new("sleep", "100")
+  shellac = Umi::Proctor.new("sleep", "100")
 
   # Kill it externally after a brief delay
   Thread.new { sleep 0.1; Process.kill("KILL", shellac.pid) }
@@ -302,14 +302,14 @@ results << test("process killed by signal during operation") do
 end
 
 results << test("stdin write after process dies") do
-  shellac = ROTP::Shellac.new("true")  # Exits immediately
+  shellac = Umi::Proctor.new("true")  # Exits immediately
   sleep 0.1  # Let it die
 
   # Writing should raise or be silently ignored
   raised = false
   begin
     shellac << "data\n"
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     raised = true
   end
 
@@ -325,7 +325,7 @@ results << test("pop_stdout! after process dies with buffered data") do
     puts "line3"
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
   sleep 0.2  # Let it complete
 
   # Should still be able to read buffered output
@@ -333,7 +333,7 @@ results << test("pop_stdout! after process dies with buffered data") do
   3.times do
     begin
       lines << shellac.pop_stdout!(1.0)
-    rescue ROTP::Shellac::ProcessExited
+    rescue Umi::Proctor::ProcessExited
       break
     end
   end
@@ -343,7 +343,7 @@ end
 
 results << test("segfault handling") do
   # Ruby doesn't easily segfault, use a C program or simulate with KILL
-  shellac = ROTP::Shellac.new("ruby", "-e", "Process.kill('SEGV', $$)")
+  shellac = Umi::Proctor.new("ruby", "-e", "Process.kill('SEGV', $$)")
 
   result = shellac.join(timeout: 2.0)
   assert result.signaled?
@@ -356,12 +356,12 @@ end
 puts "\n--- Timeout Edge Cases ---"
 
 results << test("very short timeout (1ms)") do
-  shellac = ROTP::Shellac.new("sleep", "10")
+  shellac = Umi::Proctor.new("sleep", "10")
 
   raised = false
   begin
     shellac.pop_stdout!(0.001)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised = true
   end
 
@@ -377,13 +377,13 @@ results << test("timeout with data arriving just after") do
     puts "delayed"
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # First pop_stdout! should timeout
   raised = false
   begin
     shellac.pop_stdout!(0.05)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised = true
   end
   assert raised, "expected first timeout"
@@ -396,13 +396,13 @@ results << test("timeout with data arriving just after") do
 end
 
 results << test("multiple pop_stdout! calls with different timeouts") do
-  shellac = ROTP::Shellac.new("cat")
+  shellac = Umi::Proctor.new("cat")
 
   # First: short timeout, should fail
   raised1 = false
   begin
     shellac.pop_stdout!(0.01)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised1 = true
   end
 
@@ -417,7 +417,7 @@ results << test("multiple pop_stdout! calls with different timeouts") do
   raised2 = false
   begin
     shellac.pop_stdout!(0.01)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised2 = true
   end
 
@@ -432,9 +432,9 @@ end
 # =============================================================================
 puts "\n--- Cleanup / Leaks ---"
 
-results << test("100 Shellacs with proper cleanup") do
+results << test("100 Proctors with proper cleanup") do
   100.times do |i|
-    shellac = ROTP::Shellac.new("echo", "test#{i}")
+    shellac = Umi::Proctor.new("echo", "test#{i}")
     shellac.pop_stdout!(1.0)
     shellac.join(timeout: 1.0)
   end
@@ -443,10 +443,10 @@ results << test("100 Shellacs with proper cleanup") do
   true
 end
 
-results << test("abandoned Shellacs (no join)") do
-  # Create Shellacs without joining - they should clean up eventually
+results << test("abandoned Proctors (no join)") do
+  # Create Proctors without joining - they should clean up eventually
   10.times do
-    shellac = ROTP::Shellac.new("sleep", "0.1")
+    shellac = Umi::Proctor.new("sleep", "0.1")
     # Abandon it
   end
 
@@ -455,7 +455,7 @@ results << test("abandoned Shellacs (no join)") do
   sleep 0.5
 
   # Create a new one to verify system isn't broken
-  shellac = ROTP::Shellac.new("echo", "still works")
+  shellac = Umi::Proctor.new("echo", "still works")
   line = shellac.pop_stdout!(1.0)
   assert_equal "still works\n", line
   shellac.join(timeout: 1.0)
@@ -469,7 +469,7 @@ puts "\n--- Block Form ---"
 results << test("exception in block") do
   raised = false
   begin
-    ROTP::Shellac.open("cat") do |s|
+    Umi::Proctor.open("cat") do |s|
       s << "test\n"
       raise "intentional error"
     end
@@ -479,15 +479,15 @@ results << test("exception in block") do
 
   assert raised, "exception should propagate"
 
-  # Verify cleanup happened - new Shellac should work
-  result = ROTP::Shellac.open("echo", "cleanup ok") do |s|
+  # Verify cleanup happened - new Proctor should work
+  result = Umi::Proctor.open("echo", "cleanup ok") do |s|
     s.pop_stdout!(1.0)
   end
   assert result.success?
 end
 
 results << test("early return from block") do
-  value = ROTP::Shellac.open("cat") do |s|
+  value = Umi::Proctor.open("cat") do |s|
     s << "test\n"
     line = s.pop_stdout!(1.0)
     s.close_stdin
@@ -495,7 +495,7 @@ results << test("early return from block") do
   end
 
   # Block returns early, but we get the Result from open()
-  assert value.is_a?(ROTP::Shellac::Result)
+  assert value.is_a?(Umi::Proctor::Result)
 end
 
 # =============================================================================
@@ -510,7 +510,7 @@ results << test("chaos: random SIGKILL during operation") do
 
   20.times do |i|
     begin
-      s = ROTP::Shellac.new("cat")
+      s = Umi::Proctor.new("cat")
       s << "init#{i}\n"
       shellacs << s
     rescue => e
@@ -540,7 +540,7 @@ results << test("chaos: random SIGKILL during operation") do
       s.pop_stdout!(0.5)
       s << "more#{i}\n"
       s.pop_stdout!(0.5)
-    rescue ROTP::Shellac::ProcessExited, ROTP::Shellac::Timeout
+    rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
       # Expected for killed processes
     rescue => e
       errors << "interact #{i}: #{e.class}: #{e.message}"
@@ -555,7 +555,7 @@ results << test("chaos: random SIGKILL during operation") do
     begin
       s.close_stdin if s.alive?
       s.join(timeout: 1.0)
-    rescue ROTP::Shellac::Timeout
+    rescue Umi::Proctor::Timeout
       s.kill(:KILL) rescue nil
       s.join(timeout: 0.5) rescue nil
     rescue => e
@@ -572,14 +572,14 @@ results << test("chaos: rapid stdin writes during death") do
   errors = []
 
   10.times do |round|
-    s = ROTP::Shellac.new("cat")
+    s = Umi::Proctor.new("cat")
 
     # Writer thread - spam stdin
     writer = Thread.new do
       100.times do |i|
         begin
           s << "data#{i}\n"
-        rescue ROTP::Shellac::ProcessExited
+        rescue Umi::Proctor::ProcessExited
           break
         rescue => e
           errors << "write #{round}.#{i}: #{e.class}"
@@ -597,7 +597,7 @@ results << test("chaos: rapid stdin writes during death") do
 
     begin
       s.join(timeout: 1.0)
-    rescue ROTP::Shellac::Timeout
+    rescue Umi::Proctor::Timeout
       # Force it
       s.kill(:KILL) rescue nil
       s.join(timeout: 0.5) rescue nil
@@ -610,7 +610,7 @@ results << test("chaos: rapid stdin writes during death") do
   true
 end
 
-results << test("chaos: overlapping Shellacs with random operations") do
+results << test("chaos: overlapping Proctors with random operations") do
   errors = []
   active = []
 
@@ -621,7 +621,7 @@ results << test("chaos: overlapping Shellacs with random operations") do
       # Create new
       if active.size < 10
         begin
-          s = ROTP::Shellac.new("cat")
+          s = Umi::Proctor.new("cat")
           s << "hello\n"
           active << s
         rescue => e
@@ -633,7 +633,7 @@ results << test("chaos: overlapping Shellacs with random operations") do
       if s = active.sample
         begin
           s << "msg#{i}\n"
-        rescue ROTP::Shellac::ProcessExited
+        rescue Umi::Proctor::ProcessExited
           active.delete(s)
         rescue => e
           errors << "write #{i}: #{e.class}"
@@ -644,9 +644,9 @@ results << test("chaos: overlapping Shellacs with random operations") do
       if s = active.sample
         begin
           s.pop_stdout!(0.1)
-        rescue ROTP::Shellac::ProcessExited
+        rescue Umi::Proctor::ProcessExited
           active.delete(s)
-        rescue ROTP::Shellac::Timeout
+        rescue Umi::Proctor::Timeout
           # Fine
         rescue => e
           errors << "read #{i}: #{e.class}"
@@ -696,7 +696,7 @@ results << test("alternating pop_stdout!/pop_stderr!") do
     end
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # Alternate between pop_stdout! and pop_stderr!
   5.times do |i|
@@ -718,7 +718,7 @@ results << test("100 stderr before stdout (deep buffer)") do
     puts "stdout finally"
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # Should find stdout despite 100 stderr messages buffered
   line = shellac.pop_stdout!(5.0)
@@ -735,7 +735,7 @@ results << test("output? with buffered messages") do
     puts "stdout second"
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
   sleep 0.2  # Let both messages arrive
 
   # output? should return true even if first message is stderr
@@ -748,7 +748,7 @@ results << test("output? with buffered messages") do
 end
 
 results << test("peek does not consume message") do
-  shellac = ROTP::Shellac.new("echo", "peeked")
+  shellac = Umi::Proctor.new("echo", "peeked")
   sleep 0.1  # Let message arrive
 
   # Peek should show the message
@@ -769,7 +769,7 @@ end
 results << test("stochastic interleaving (20 iterations)") do
   # The upcase fixture writes stderr randomly - stress test the fix
   20.times do |i|
-    shellac = ROTP::Shellac.new("#{FIXTURES}/upcase")
+    shellac = Umi::Proctor.new("#{FIXTURES}/upcase")
     shellac << "test#{i}\n"
     line = shellac.pop_stdout!(2.0)
     raise "expected TEST#{i}, got #{line.inspect}" unless line.chomp == "TEST#{i}"
@@ -787,13 +787,13 @@ results << test("output-then-immediate-exit race") do
   # This exercises the race between stdout and process_died
   20.times do |i|
     script = "puts 'fast#{i}'"
-    shellac = ROTP::Shellac.new("ruby", "-e", script)
+    shellac = Umi::Proctor.new("ruby", "-e", script)
 
     # The process may have already exited
     begin
       line = shellac.pop_stdout!(1.0)
       raise "wrong output" unless line.chomp == "fast#{i}"
-    rescue ROTP::Shellac::ProcessExited
+    rescue Umi::Proctor::ProcessExited
       # Also acceptable if we missed the output
     end
 
@@ -807,7 +807,7 @@ results << test("slow drip with aggressive timeouts") do
     3.times { |i| sleep 0.1; puts i }
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   received = []
   6.times do
@@ -815,9 +815,9 @@ results << test("slow drip with aggressive timeouts") do
       # Very short timeout - will often miss
       line = shellac.pop_stdout!(0.05)
       received << line.chomp.to_i
-    rescue ROTP::Shellac::Timeout
+    rescue Umi::Proctor::Timeout
       # Expected
-    rescue ROTP::Shellac::ProcessExited
+    rescue Umi::Proctor::ProcessExited
       break
     end
   end
@@ -835,7 +835,7 @@ results << test("mid-output hang recovery") do
     puts "after"
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # Get first line
   line = shellac.pop_stdout!(1.0)
@@ -845,7 +845,7 @@ results << test("mid-output hang recovery") do
   raised = false
   begin
     shellac.pop_stdout!(0.2)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised = true
   end
 
@@ -861,17 +861,17 @@ end
 # =============================================================================
 puts "\n--- Multi-threaded Access ---"
 
-results << test("concurrent readers (same Shellac)") do
+results << test("concurrent readers (same Proctor)") do
   errors = []
 
-  shellac = ROTP::Shellac.new("ruby", "-e", "10.times { |i| puts i; sleep 0.01 }")
+  shellac = Umi::Proctor.new("ruby", "-e", "10.times { |i| puts i; sleep 0.01 }")
 
   readers = 3.times.map do |r|
     Thread.new do
       5.times do
         begin
           shellac.pop_stdout!(0.5)
-        rescue ROTP::Shellac::ProcessExited, ROTP::Shellac::Timeout
+        rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
           # OK
         rescue => e
           errors << "reader #{r}: #{e.class}: #{e.message}"
@@ -887,17 +887,17 @@ results << test("concurrent readers (same Shellac)") do
   true
 end
 
-results << test("concurrent writers (same Shellac)") do
+results << test("concurrent writers (same Proctor)") do
   errors = []
 
-  shellac = ROTP::Shellac.new("cat")
+  shellac = Umi::Proctor.new("cat")
 
   writers = 3.times.map do |w|
     Thread.new do
       5.times do |i|
         begin
           shellac << "writer#{w}-#{i}\n"
-        rescue ROTP::Shellac::ProcessExited
+        rescue Umi::Proctor::ProcessExited
           # OK if killed
         rescue => e
           errors << "writer #{w}: #{e.class}: #{e.message}"
@@ -933,7 +933,7 @@ results << test("tiny chunks (1 byte at a time)") do
     "hello world\\n".each_char { |c| print c; $stdout.flush; sleep 0.001 }
   RUBY
 
-  shellac = ROTP::Shellac.new("ruby", "-e", script)
+  shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # Should still receive as a complete line (gets behavior)
   line = shellac.pop_stdout!(2.0)
@@ -943,13 +943,13 @@ results << test("tiny chunks (1 byte at a time)") do
 end
 
 results << test("partial line at exit (no final newline)") do
-  shellac = ROTP::Shellac.new("ruby", "-e", "print 'partial'")
+  shellac = Umi::Proctor.new("ruby", "-e", "print 'partial'")
 
   # May or may not receive the partial line
   begin
     line = shellac.pop_stdout!(1.0)
     # If we got it, great
-  rescue ROTP::Shellac::ProcessExited, ROTP::Shellac::Timeout
+  rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
     # Also OK
   end
 
@@ -959,7 +959,7 @@ end
 
 results << test("stdout buffer overflow simulation") do
   # Generate more data than typical buffer size
-  shellac = ROTP::Shellac.new("ruby", "-e", "puts 'x' * 100_000")
+  shellac = Umi::Proctor.new("ruby", "-e", "puts 'x' * 100_000")
 
   line = shellac.pop_stdout!(5.0)
   raise "expected 100000 chars" unless line.bytesize > 99_000
@@ -973,7 +973,7 @@ end
 puts "\n--- Lifecycle Edge Cases ---"
 
 results << test("double close_stdin") do
-  shellac = ROTP::Shellac.new("cat")
+  shellac = Umi::Proctor.new("cat")
   shellac << "test\n"
   shellac.pop_stdout!(1.0)
 
@@ -984,13 +984,13 @@ results << test("double close_stdin") do
 end
 
 results << test("write after close_stdin") do
-  shellac = ROTP::Shellac.new("cat")
+  shellac = Umi::Proctor.new("cat")
   shellac.close_stdin
 
   raised = false
   begin
     shellac << "test\n"
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     raised = true
   end
 
@@ -1000,7 +1000,7 @@ results << test("write after close_stdin") do
 end
 
 results << test("operations after join") do
-  shellac = ROTP::Shellac.new("true")
+  shellac = Umi::Proctor.new("true")
   shellac.join(timeout: 1.0)
 
   # All these should raise ProcessExited or be no-ops
@@ -1008,7 +1008,7 @@ results << test("operations after join") do
 
   begin
     shellac << "test\n"
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     # Expected
   rescue => e
     errors << "write: #{e.class}"
@@ -1016,7 +1016,7 @@ results << test("operations after join") do
 
   begin
     shellac.pop_stdout!(0.1)
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     # Expected
   rescue => e
     errors << "pop_stdout!: #{e.class}"
@@ -1024,7 +1024,7 @@ results << test("operations after join") do
 
   begin
     shellac.kill(:TERM)
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     # Expected
   rescue => e
     errors << "kill: #{e.class}"
@@ -1035,7 +1035,7 @@ results << test("operations after join") do
 end
 
 results << test("join during active I/O") do
-  shellac = ROTP::Shellac.new("cat")
+  shellac = Umi::Proctor.new("cat")
 
   # Start writing in background
   writer = Thread.new do
@@ -1063,7 +1063,7 @@ end
 puts "\n--- Signal Edge Cases ---"
 
 results << test("rapid signal spam") do
-  shellac = ROTP::Shellac.new("sleep", "10")
+  shellac = Umi::Proctor.new("sleep", "10")
 
   # Spam signals
   5.times do
@@ -1079,7 +1079,7 @@ end
 
 results << test("SIGTERM ignored, fallback to KILL") do
   # Process that ignores TERM
-  shellac = ROTP::Shellac.new("#{FIXTURES}/term-ignorer")
+  shellac = Umi::Proctor.new("#{FIXTURES}/term-ignorer")
   shellac.pop_stdout!(2.0)  # Wait for startup
 
   # stop() should TERM, timeout, then KILL
@@ -1096,9 +1096,9 @@ end
 puts "\n--- Heisenbug Hunting ---"
 
 results << test("rapid stdin close/reopen simulation") do
-  # Simulates connection drops - close stdin, start new Shellac
+  # Simulates connection drops - close stdin, start new Proctor
   20.times do |i|
-    s = ROTP::Shellac.new("cat")
+    s = Umi::Proctor.new("cat")
     s << "test#{i}\n"
 
     # Random: either read or just kill
@@ -1124,7 +1124,7 @@ results << test("message storm while shutting down") do
       loop { puts "spam" }
     RUBY
 
-    s = ROTP::Shellac.new("ruby", "-e", script)
+    s = Umi::Proctor.new("ruby", "-e", script)
 
     # Let it generate some output
     3.times { s.pop_stdout!(0.5) rescue nil }
@@ -1138,11 +1138,11 @@ results << test("message storm while shutting down") do
 end
 
 results << test("constructor/destructor race") do
-  # Rapidly create and abandon Shellacs
+  # Rapidly create and abandon Proctors
   shellacs = []
 
   30.times do
-    s = ROTP::Shellac.new("sleep", "0.01")
+    s = Umi::Proctor.new("sleep", "0.01")
     shellacs << s if rand < 0.3  # Only keep some references
   end
 
@@ -1155,7 +1155,7 @@ results << test("constructor/destructor race") do
   sleep 0.2
 
   # System should still work
-  s = ROTP::Shellac.new("echo", "still alive")
+  s = Umi::Proctor.new("echo", "still alive")
   line = s.pop_stdout!(1.0)
   assert_equal "still alive\n", line
   s.join(timeout: 1.0)
@@ -1167,7 +1167,7 @@ end
 puts "\n--- Defective Processes ---"
 
 results << test("infinite stdout spam") do
-  s = ROTP::Shellac.new("#{FIXTURES}/infinite-stdout")
+  s = Umi::Proctor.new("#{FIXTURES}/infinite-stdout")
 
   # Read a few lines to verify it works
   5.times { s.pop_stdout!(1.0) }
@@ -1179,7 +1179,7 @@ results << test("infinite stdout spam") do
 end
 
 results << test("stdin blackhole (never outputs)") do
-  s = ROTP::Shellac.new("#{FIXTURES}/stdin-blackhole")
+  s = Umi::Proctor.new("#{FIXTURES}/stdin-blackhole")
 
   # Write lots of data
   10.times { s << "data\n" }
@@ -1188,7 +1188,7 @@ results << test("stdin blackhole (never outputs)") do
   raised = false
   begin
     s.pop_stdout!(0.2)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised = true
   end
 
@@ -1198,13 +1198,13 @@ results << test("stdin blackhole (never outputs)") do
 end
 
 results << test("delayed/unflushed stdout") do
-  s = ROTP::Shellac.new("#{FIXTURES}/delayed-stdout")
+  s = Umi::Proctor.new("#{FIXTURES}/delayed-stdout")
 
   # This process doesn't flush, so we might not get output
   raised = false
   begin
     s.pop_stdout!(0.5)
-  rescue ROTP::Shellac::Timeout
+  rescue Umi::Proctor::Timeout
     raised = true
   end
 
@@ -1215,16 +1215,16 @@ results << test("delayed/unflushed stdout") do
 end
 
 results << test("process with child processes") do
-  s = ROTP::Shellac.new("#{FIXTURES}/fork-bomb-lite")
+  s = Umi::Proctor.new("#{FIXTURES}/fork-bomb-lite")
 
   # Collect all output until process exits
   lines = []
   loop do
     begin
       lines << s.pop_stdout!(3.0)
-    rescue ROTP::Shellac::ProcessExited
+    rescue Umi::Proctor::ProcessExited
       break
-    rescue ROTP::Shellac::Timeout
+    rescue Umi::Proctor::Timeout
       # Still waiting - dump what we have for debugging
       raise "Timed out waiting for output. Got: #{lines.inspect}"
     end
@@ -1238,7 +1238,7 @@ results << test("process with child processes") do
 end
 
 results << test("memory hog (allocates rapidly)") do
-  s = ROTP::Shellac.new("#{FIXTURES}/memory-hog")
+  s = Umi::Proctor.new("#{FIXTURES}/memory-hog")
 
   # Should get "starting"
   line = s.pop_stdout!(5.0)
@@ -1248,7 +1248,7 @@ results << test("memory hog (allocates rapidly)") do
   5.times do
     begin
       s.pop_stdout!(2.0)
-    rescue ROTP::Shellac::ProcessExited
+    rescue Umi::Proctor::ProcessExited
       break
     end
   end
@@ -1261,7 +1261,7 @@ end
 
 results << test("randomly crashing process (10 attempts)") do
   10.times do |i|
-    s = ROTP::Shellac.new("#{FIXTURES}/random-crash")
+    s = Umi::Proctor.new("#{FIXTURES}/random-crash")
 
     # Read some ticks until it crashes or we've had enough
     ticks = 0
@@ -1270,9 +1270,9 @@ results << test("randomly crashing process (10 attempts)") do
         s.pop_stdout!(1.0)
         ticks += 1
         break if ticks >= 10  # Don't wait forever
-      rescue ROTP::Shellac::ProcessExited
+      rescue Umi::Proctor::ProcessExited
         break
-      rescue ROTP::Shellac::Timeout
+      rescue Umi::Proctor::Timeout
         break
       end
     end
@@ -1280,7 +1280,7 @@ results << test("randomly crashing process (10 attempts)") do
     # Clean up
     begin
       s.join(timeout: 0.5)
-    rescue ROTP::Shellac::Timeout
+    rescue Umi::Proctor::Timeout
       s.kill(:KILL)
       s.join(timeout: 0.5) rescue nil
     end
@@ -1289,7 +1289,7 @@ end
 
 results << test("process that exits during our write") do
   # Start a process that will exit quickly
-  s = ROTP::Shellac.new("ruby", "-e", "sleep 0.05; exit 0")
+  s = Umi::Proctor.new("ruby", "-e", "sleep 0.05; exit 0")
 
   # Try to write while it's dying
   sleep 0.03
@@ -1297,7 +1297,7 @@ results << test("process that exits during our write") do
   10.times do |i|
     begin
       s << "data#{i}\n"
-    rescue ROTP::Shellac::ProcessExited
+    rescue Umi::Proctor::ProcessExited
       # Expected
     rescue => e
       errors << "#{e.class}: #{e.message}"
@@ -1318,7 +1318,7 @@ results << test("process closes its stdout early") do
     sleep 1  # Stay alive but stdout is closed
   RUBY
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
 
   # Get the output before stdout closes
   line = s.pop_stdout!(1.0)
@@ -1328,7 +1328,7 @@ results << test("process closes its stdout early") do
   raised = false
   begin
     s.pop_stdout!(0.5)
-  rescue ROTP::Shellac::ProcessExited, ROTP::Shellac::Timeout
+  rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
     raised = true
   end
 
@@ -1350,7 +1350,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
   scenarios = [
     -> {
       # Simple echo
-      s = ROTP::Shellac.new("cat")
+      s = Umi::Proctor.new("cat")
       s << "hello\n"
       s.pop_stdout!(1.0)
       s.close_stdin
@@ -1358,7 +1358,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
     },
     -> {
       # Stochastic fixture
-      s = ROTP::Shellac.new("#{FIXTURES}/upcase")
+      s = Umi::Proctor.new("#{FIXTURES}/upcase")
       s << "test\n"
       s.pop_stdout!(2.0)
       s.close_stdin
@@ -1366,21 +1366,21 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
     },
     -> {
       # Fast exit
-      s = ROTP::Shellac.new("true")
+      s = Umi::Proctor.new("true")
       s.join(timeout: 1.0)
     },
     -> {
       # Killed process
-      s = ROTP::Shellac.new("sleep", "10")
+      s = Umi::Proctor.new("sleep", "10")
       s.kill(:KILL)
       s.join(timeout: 1.0)
     },
     -> {
       # Timeout scenario
-      s = ROTP::Shellac.new("#{FIXTURES}/hang")
+      s = Umi::Proctor.new("#{FIXTURES}/hang")
       begin
         s.pop_stdout!(0.1)
-      rescue ROTP::Shellac::Timeout
+      rescue Umi::Proctor::Timeout
         # Expected
       end
       s.kill(:KILL)
@@ -1388,7 +1388,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
     },
     -> {
       # Counter (multi-shot)
-      s = ROTP::Shellac.new("#{FIXTURES}/counter")
+      s = Umi::Proctor.new("#{FIXTURES}/counter")
       s << "x\n"
       s.pop_stdout!(1.0) rescue nil
       s.close_stdin
@@ -1396,14 +1396,14 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
     },
     -> {
       # Infinite stdout (killed)
-      s = ROTP::Shellac.new("#{FIXTURES}/infinite-stdout")
+      s = Umi::Proctor.new("#{FIXTURES}/infinite-stdout")
       s.pop_stdout!(0.5) rescue nil
       s.kill(:KILL)
       s.join(timeout: 1.0)
     },
     -> {
       # Random crasher
-      s = ROTP::Shellac.new("#{FIXTURES}/random-crash")
+      s = Umi::Proctor.new("#{FIXTURES}/random-crash")
       3.times { s.pop_stdout!(0.5) rescue nil }
       s.kill(:KILL) rescue nil
       s.join(timeout: 1.0) rescue nil
@@ -1441,30 +1441,30 @@ results << test("rapid scenario switching (100 iterations)") do
     begin
       case scenario
       when 0
-        s = ROTP::Shellac.new("echo", "test#{i}")
+        s = Umi::Proctor.new("echo", "test#{i}")
         s.pop_stdout!(1.0)
         s.join(timeout: 1.0)
       when 1
-        s = ROTP::Shellac.new("cat")
+        s = Umi::Proctor.new("cat")
         s << "x\n"
         s.pop_stdout!(1.0)
         s.close_stdin
         s.join(timeout: 1.0)
       when 2
-        s = ROTP::Shellac.new("#{FIXTURES}/upcase")
+        s = Umi::Proctor.new("#{FIXTURES}/upcase")
         s << "hi\n"
         s.pop_stdout!(2.0)
         s.close_stdin
         s.join(timeout: 1.0)
       when 3
-        s = ROTP::Shellac.new("sleep", "10")
+        s = Umi::Proctor.new("sleep", "10")
         s.kill(:KILL)
         s.join(timeout: 1.0)
       when 4
-        s = ROTP::Shellac.new("true")
+        s = Umi::Proctor.new("true")
         s.join(timeout: 1.0)
       end
-    rescue ROTP::Shellac::ProcessExited, ROTP::Shellac::Timeout
+    rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
       # OK
     rescue => e
       errors << "iter#{i}: #{e.class}: #{e.message}"
@@ -1480,7 +1480,7 @@ results << test("concurrent reads and writes across shellacs") do
   shellacs = []
 
   # Create 5 cat processes
-  5.times { shellacs << ROTP::Shellac.new("cat") }
+  5.times { shellacs << Umi::Proctor.new("cat") }
 
   # Spawn readers and writers
   threads = []
@@ -1491,7 +1491,7 @@ results << test("concurrent reads and writes across shellacs") do
       10.times do |j|
         begin
           s << "msg#{id}-#{j}\n"
-        rescue ROTP::Shellac::ProcessExited
+        rescue Umi::Proctor::ProcessExited
           break
         rescue => e
           errors << "writer#{id}: #{e.class}"
@@ -1508,7 +1508,7 @@ results << test("concurrent reads and writes across shellacs") do
       10.times do
         begin
           s.pop_stdout!(0.5)
-        rescue ROTP::Shellac::ProcessExited, ROTP::Shellac::Timeout
+        rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
           break
         rescue => e
           errors << "reader#{id}: #{e.class}"
@@ -1540,7 +1540,7 @@ results << test("very long line (100KB single line)") do
   long_line = "x" * 100_000
   script = "puts '#{long_line}'"
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
   line = s.pop_stdout!(5.0)
 
   assert line.length > 99_000, "expected 100KB+ line, got #{line.length}"
@@ -1556,7 +1556,7 @@ results << test("mixed line endings (CR, LF, CRLF)") do
     print "line4\\n"     # LF - should get "line3\\rline4"
   RUBY
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
 
   lines = []
   3.times do
@@ -1581,7 +1581,7 @@ results << test("process exec()s into another process") do
     exec("echo", "after_exec")
   RUBY
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
 
   lines = []
   2.times do
@@ -1599,7 +1599,7 @@ results << test("process exec()s into another process") do
 end
 
 results << test("concurrent pop and write from different threads") do
-  s = ROTP::Shellac.new("cat")
+  s = Umi::Proctor.new("cat")
   errors = []
 
   writer = Thread.new do
@@ -1607,7 +1607,7 @@ results << test("concurrent pop and write from different threads") do
       begin
         s << "msg#{i}\n"
         sleep 0.01
-      rescue ROTP::Shellac::ProcessExited
+      rescue Umi::Proctor::ProcessExited
         break
       rescue => e
         errors << "writer: #{e.class}: #{e.message}"
@@ -1621,7 +1621,7 @@ results << test("concurrent pop and write from different threads") do
       begin
         s.pop_stdout!(1.0)
         received += 1
-      rescue ROTP::Shellac::Timeout, ROTP::Shellac::ProcessExited
+      rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
         break
       rescue => e
         errors << "reader: #{e.class}: #{e.message}"
@@ -1642,13 +1642,13 @@ end
 
 results << test("concurrent pop and kill") do
   10.times do
-    s = ROTP::Shellac.new("cat")
+    s = Umi::Proctor.new("cat")
 
     # Start a reader that will block
     reader = Thread.new do
       begin
         s.pop_stdout!(5.0)
-      rescue ROTP::Shellac::Timeout, ROTP::Shellac::ProcessExited
+      rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
         :expected
       end
     end
@@ -1666,7 +1666,7 @@ results << test("concurrent pop and kill") do
 end
 
 results << test("rapid pop/peek/output? interleaving") do
-  s = ROTP::Shellac.new("ruby", "-e", "10.times { |i| puts i; sleep 0.02 }")
+  s = Umi::Proctor.new("ruby", "-e", "10.times { |i| puts i; sleep 0.02 }")
 
   ops = []
   20.times do
@@ -1704,7 +1704,7 @@ results << test("stdin backpressure (write faster than process reads)") do
     end
   RUBY
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
 
   # Try to flood stdin - pipe should buffer or block
   written = 0
@@ -1716,7 +1716,7 @@ results << test("stdin backpressure (write faster than process reads)") do
       written += 1
       break if Time.now - start > 1.0  # Don't spend too long
     end
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     # OK
   end
 
@@ -1727,7 +1727,7 @@ results << test("stdin backpressure (write faster than process reads)") do
 end
 
 results << test("SIGSTOP then SIGCONT") do
-  s = ROTP::Shellac.new("ruby", "-e", "$stdout.sync=true; 10.times { |i| puts i; sleep 0.1 }")
+  s = Umi::Proctor.new("ruby", "-e", "$stdout.sync=true; 10.times { |i| puts i; sleep 0.1 }")
 
   # Get first line
   case s.pop_stdout(1)
@@ -1769,7 +1769,7 @@ results << test("SIGSTOP then SIGCONT") do
 end
 
 results << test("double join is safe") do
-  s = ROTP::Shellac.new("true")
+  s = Umi::Proctor.new("true")
 
   r1 = s.join(timeout: 1.0)
   r2 = s.join(timeout: 1.0)
@@ -1779,14 +1779,14 @@ results << test("double join is safe") do
 end
 
 results << test("operations after join raise ProcessExited") do
-  s = ROTP::Shellac.new("echo", "test")
+  s = Umi::Proctor.new("echo", "test")
   s.join(timeout: 2.0)
 
   # Write should raise
   raised = false
   begin
     s << "test\n"
-  rescue ROTP::Shellac::ProcessExited
+  rescue Umi::Proctor::ProcessExited
     raised = true
   end
   assert raised, "write after join should raise"
@@ -1802,12 +1802,12 @@ results << test("operations after join raise ProcessExited") do
   end
 end
 
-results << test("GC during active Shellac") do
+results << test("GC during active Proctor") do
   shellacs = []
 
   # Create many shellacs
   10.times do
-    s = ROTP::Shellac.new("cat")
+    s = Umi::Proctor.new("cat")
     s << "test\n"
     shellacs << s
   end
@@ -1828,7 +1828,7 @@ end
 results << test("extremely short-lived process (pop before it starts)") do
   10.times do
     # Process exits almost instantly
-    s = ROTP::Shellac.new("true")
+    s = Umi::Proctor.new("true")
 
     # Immediately try operations
     case s.pop_stdout(0.5)
@@ -1852,7 +1852,7 @@ results << test("process that ignores SIGTERM (must SIGKILL)") do
     sleep 100
   RUBY
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
   s.pop_stdout!(1.0)  # Wait for startup
 
   # TERM should be ignored
@@ -1886,7 +1886,7 @@ results << test("orphaned child process keeps writing") do
     end
   RUBY
 
-  s = ROTP::Shellac.new("ruby", "-e", script)
+  s = Umi::Proctor.new("ruby", "-e", script)
 
   lines = []
   5.times do
@@ -1908,7 +1908,7 @@ results << test("orphaned child process keeps writing") do
 end
 
 results << test("Ractor watcher crash recovery") do
-  s = ROTP::Shellac.new("cat")
+  s = Umi::Proctor.new("cat")
   s << "test\n"
   line = s.pop_stdout!(1.0)
   assert_equal "test\n", line
