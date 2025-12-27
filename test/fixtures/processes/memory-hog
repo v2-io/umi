@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+# Defective process: allocates memory rapidly
+$stdout.sync = true
+puts "starting"
+arrays = []
+loop do
+  arrays << ("x" * 1_000_000)  # 1MB strings
+  puts "allocated #{arrays.size}MB"
+  break if arrays.size >= 50  # Cap at 50MB for testing
+end
+puts "done"

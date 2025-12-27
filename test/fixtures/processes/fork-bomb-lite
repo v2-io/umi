@@ -1,0 +1,17 @@
+#!/usr/bin/env ruby
+# Defective process: spawns child processes
+# (lite version - only spawns 3 children, not a real fork bomb)
+$stdout.sync = true
+puts "parent"
+
+3.times do |i|
+  if fork.nil?
+    # Child
+    sleep 0.5
+    puts "child#{i}"
+    exit 0
+  end
+end
+
+Process.waitall
+puts "done"

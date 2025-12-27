@@ -46,11 +46,11 @@ puts "--- Basic I/O ---"
 results << test("echo with cat") do
   shellac = ROTP::Shellac.new("cat")
   shellac << "hello\n"
-  line = shellac.receive
+  line = shellac.pop_stdout!
   assert_equal "hello\n", line
 
   shellac << "world\n"
-  line = shellac.receive
+  line = shellac.pop_stdout!
   assert_equal "world\n", line
 
   shellac.close_stdin
@@ -61,7 +61,7 @@ end
 results << test("echo fixture with jitter") do
   shellac = ROTP::Shellac.new("#{FIXTURES}/echo")
   shellac << "test line\n"
-  line = shellac.receive
+  line = shellac.pop_stdout!
   assert_equal "test line\n", line
   shellac.close_stdin
   result = shellac.join
@@ -71,7 +71,7 @@ end
 results << test("upcase fixture") do
   shellac = ROTP::Shellac.new("#{FIXTURES}/upcase")
   shellac << "hello\n"
-  line = shellac.receive
+  line = shellac.pop_stdout!
   assert_equal "HELLO\n", line
   shellac.close_stdin
   shellac.join
@@ -139,7 +139,7 @@ end
 
 results << test("stop (graceful shutdown)") do
   shellac = ROTP::Shellac.new("#{FIXTURES}/term-catcher")
-  shellac.receive  # Wait for startup message
+  shellac.pop_stdout!  # Wait for startup message
 
   result = shellac.stop(timeout: 2.0)
   assert_equal 0, result.exit_code  # term-catcher exits cleanly
@@ -150,12 +150,12 @@ end
 # =============================================================================
 puts "\n--- Timeout ---"
 
-results << test("receive timeout") do
+results << test("pop_stdout! timeout") do
   shellac = ROTP::Shellac.new("#{FIXTURES}/hang")
 
   raised = false
   begin
-    shellac.receive(timeout: 0.2)
+    shellac.pop_stdout!(0.2)
   rescue ROTP::Shellac::Timeout
     raised = true
   end
@@ -194,7 +194,7 @@ results << test("counter fixture") do
   lines = []
   3.times do
     begin
-      line = shellac.receive(timeout: 1.0)
+      line = shellac.pop_stdout!(1.0)
       lines << line
       break if line.include?("1:")
     rescue ROTP::Shellac::Timeout
@@ -215,7 +215,7 @@ results << test("dot multi-shot") do
   shellac << "digraph G1 { A -> B; }\n"
   lines1 = []
   loop do
-    line = shellac.receive(timeout: 2.0)
+    line = shellac.pop_stdout!(2.0)
     lines1 << line
     break if line.strip == "stop"
   end
@@ -225,7 +225,7 @@ results << test("dot multi-shot") do
   shellac << "digraph G2 { X -> Y -> Z; }\n"
   lines2 = []
   loop do
-    line = shellac.receive(timeout: 2.0)
+    line = shellac.pop_stdout!(2.0)
     lines2 << line
     break if line.strip == "stop"
   end
@@ -251,7 +251,7 @@ results << test("stderr to stdout with merge mode") do
   lines = []
   3.times do
     begin
-      line = shellac.receive(timeout: 0.5)
+      line = shellac.pop_stdout!(0.5)
       lines << line
       break if line.include?("HELLO")
     rescue ROTP::Shellac::Timeout, ROTP::Shellac::ProcessExited
@@ -274,7 +274,7 @@ results << test("block form (open)") do
   # Use echo instead of drip for speed
   result = ROTP::Shellac.open("cat") do |s|
     s << "hello\n"
-    line = s.receive(timeout: 1.0)
+    line = s.pop_stdout!(1.0)
     assert_equal "hello\n", line
     s.close_stdin
   end

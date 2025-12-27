@@ -1,0 +1,3 @@
+#!/usr/bin/env ruby
+# Defective process: reads stdin forever but never outputs
+while $stdin.gets; end

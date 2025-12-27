@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+# Defective process: holds output hostage, only flushes periodically
+# This simulates broken buffering
+STDOUT.sync = false
+loop do
+  print "unflushed "
+  sleep 0.1
+end

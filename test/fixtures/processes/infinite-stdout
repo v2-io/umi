@@ -1,0 +1,4 @@
+#!/usr/bin/env ruby
+# Defective process: infinite stdout spam with no reads
+$stdout.sync = true
+loop { puts "x" * 1000 }

@@ -9,31 +9,72 @@ module ROTP
   # - Bidirectional messaging (stdin/stdout as send/receive)
   # - Death notification (via Ractor.monitor)
   # - Isolation (process crashes become messages, not Ruby crashes)
+  # - OTP-style tagged tuples for pattern matching
   #
   # The name: Shell + Actor, or shellac (a protective coating).
   #
-  # @example Basic usage
-  #   shellac = ROTP::Shellac.new("cat")
-  #   shellac << "hello\n"
-  #   puts shellac.receive  # => "hello\n"
-  #   shellac.close_stdin
-  #   result = shellac.join
-  #   puts result.success?  # => true
+  # ## Primary API
   #
-  # @example Multi-shot conversation
-  #   shellac = ROTP::Shellac.new("dot", "-Tplain")
-  #   shellac << "digraph G { A -> B; }\n"
-  #   while (line = shellac.receive) != "stop\n"
-  #     process(line)
+  # The API uses tagged tuples for pattern matching. Timeouts return nil
+  # (not exceptions), enabling OTP-style control flow.
+  #
+  # - `pop(timeout)` → `[:stdout, data]`, `[:stderr, data]`, `nil`, `[:closed, result]`
+  # - `pop_stdout(timeout)` → `[:ok, data]`, `nil`, `[:closed, result]`
+  # - `pop_stderr(timeout)` → `[:ok, data]`, `nil`, `[:closed, result]`
+  # - `pop!`, `pop_stdout!`, `pop_stderr!` → raising versions (for simple scripts)
+  #
+  # @example Basic usage with pattern matching
+  #   sh = ROTP::Shellac.new("cat")
+  #   sh << "hello\n"
+  #
+  #   case sh.pop_stdout(2)
+  #   in [:ok, line] then puts line
+  #   in nil then puts "timeout"
+  #   in [:closed, result] then puts "exited: #{result.exit_code}"
   #   end
-  #   # Send another graph...
+  #
+  #   sh.close_stdin
+  #   sh.join
+  #
+  # @example OTP-style polling with short timeouts
+  #   loop do
+  #     case sh.pop_stdout(0.1)
+  #     in [:ok, line]
+  #       process(line)
+  #     in nil
+  #       do_other_work  # timeout is normal, not an error
+  #     in [:closed, _]
+  #       break
+  #     end
+  #   end
+  #
+  # @example Enumerable iteration
+  #   sh = ROTP::Shellac.new("ls", "-la")
+  #   sh.each { |line| puts line }
+  #
+  #   # Or with Enumerable methods:
+  #   sh.take(5).map(&:chomp)
+  #   sh.lazy.select { |l| l.include?("rb") }.first(3)
+  #
+  # @example Simple script (raising API)
+  #   sh = ROTP::Shellac.new("cat")
+  #   sh << "hello\n"
+  #   puts sh.pop_stdout!  # raises Timeout or ProcessExited on failure
+  #   sh.close_stdin
+  #   sh.join
   #
   class Shellac
+    include Enumerable
+
     # Raised when a receive times out
     class Timeout < StandardError; end
 
     # Raised when the process has already exited
     class ProcessExited < StandardError; end
+
+    # Default timeouts (in seconds)
+    DEFAULT_POP_TIMEOUT = 2
+    DEFAULT_POP_BANG_TIMEOUT = 120
 
     # Result of a completed process
     class Result
@@ -106,6 +147,7 @@ module ROTP
       @result = nil
       @exit_callbacks = []
       @message_buffer = []
+      @pending_death = nil  # [exit_code, signal] if we got process_died but have buffered output
 
       start_watcher
     end
@@ -136,75 +178,280 @@ module ROTP
       self
     end
 
-    # Receive the next line/chunk from stdout.
+    # Look at the next message without consuming it.
+    # Returns immediately - does not block.
     #
-    # @param timeout [Float, nil] Seconds to wait (nil = forever)
-    # @return [String] The received data
+    # @return [Array, Symbol, nil] The next message, or nil if none available
+    def peek
+      # Check buffer first
+      return @message_buffer.first unless @message_buffer.empty?
+
+      # Try a non-blocking receive
+      begin
+        msg = receive_message(timeout: 0)
+        @message_buffer << msg if msg
+        msg
+      rescue
+        nil
+      end
+    end
+
+    # Is there output waiting to be read?
+    #
+    # @return [Boolean]
+    def output?
+      !peek.nil?
+    end
+
+    # =========================================================================
+    # Primary API: pop / pop_stdout / pop_stderr (and ! variants)
+    # =========================================================================
+
+    # Get the next message (stdout or stderr) with timeout.
+    # Returns tagged tuple for pattern matching - does not raise on timeout.
+    #
+    # @param timeout [Numeric, :forever] Seconds to wait (default 2)
+    # @return [Array, nil] [:stdout, data], [:stderr, data], nil (timeout), or [:closed, result]
+    #
+    # @example
+    #   case sh.pop(5)
+    #   in [:stdout, line] then process_output(line)
+    #   in [:stderr, line] then log_error(line)
+    #   in nil then handle_timeout()
+    #   in [:closed, result] then cleanup(result)
+    #   end
+    def pop(timeout = DEFAULT_POP_TIMEOUT)
+      actual_timeout = (timeout == :forever) ? nil : timeout
+
+      if @exited
+        buffered = @message_buffer.find { |m| m[0] == :stdout || m[0] == :stderr }
+        if buffered
+          @message_buffer.delete(buffered)
+          return buffered  # [:stdout, data] or [:stderr, data]
+        end
+        return [:closed, @result]
+      end
+
+      if @pending_death
+        buffered = @message_buffer.find { |m| m[0] == :stdout || m[0] == :stderr }
+        if buffered
+          @message_buffer.delete(buffered)
+          return buffered
+        end
+        exit_code, sig = @pending_death
+        @pending_death = nil
+        handle_death(exit_code, sig)
+        return [:closed, @result]
+      end
+
+      msg = receive_any_output(timeout: actual_timeout)
+
+      case msg
+      in [:stdout, _] | [:stderr, _]
+        msg
+      in [:process_died, _pid, exit_code, sig]
+        drain_remaining_to_buffer
+        buffered = @message_buffer.find { |m| m[0] == :stdout || m[0] == :stderr }
+        if buffered
+          @pending_death = [exit_code, sig]
+          @message_buffer.delete(buffered)
+          return buffered
+        end
+        handle_death(exit_code, sig)
+        [:closed, @result]
+      in nil | :timeout
+        nil
+      else
+        # Buffer non-output messages and retry
+        @message_buffer << msg if msg
+        pop(timeout)
+      end
+    end
+
+    # Get the next message, raising on timeout or closed.
+    #
+    # @param timeout [Numeric, :forever] Seconds to wait (default 120)
+    # @return [Array] [:stdout, data] or [:stderr, data]
     # @raise [Timeout] If timeout expires
-    # @raise [ProcessExited] If process has exited and no more data
-    def receive(timeout: nil)
-      # If already exited, check buffer for remaining stdout, else raise
+    # @raise [ProcessExited] If process has exited
+    def pop!(timeout = DEFAULT_POP_BANG_TIMEOUT)
+      case pop(timeout)
+      in [:stdout, _] | [:stderr, _] => msg
+        msg
+      in nil
+        raise Timeout, "No data received within #{timeout}s"
+      in [:closed, _]
+        raise ProcessExited, "Process has exited"
+      end
+    end
+
+    # Get the next stdout message with timeout.
+    # Buffers stderr for later retrieval.
+    #
+    # @param timeout [Numeric, :forever] Seconds to wait (default 2)
+    # @return [Array, nil] [:ok, data], nil (timeout), or [:closed, result]
+    def pop_stdout(timeout = DEFAULT_POP_TIMEOUT)
+      actual_timeout = (timeout == :forever) ? nil : timeout
+
       if @exited
         buffered = @message_buffer.find { |m| m[0] == :stdout }
         if buffered
           @message_buffer.delete(buffered)
-          return buffered[1]
+          return [:ok, buffered[1]]
         end
+        return [:closed, @result]
+      end
+
+      if @pending_death
+        buffered = @message_buffer.find { |m| m[0] == :stdout }
+        if buffered
+          @message_buffer.delete(buffered)
+          return [:ok, buffered[1]]
+        end
+        exit_code, sig = @pending_death
+        @pending_death = nil
+        handle_death(exit_code, sig)
+        return [:closed, @result]
+      end
+
+      msg = drain_until_stdout(timeout: actual_timeout)
+
+      case msg
+      in [:stdout, data]
+        [:ok, data]
+      in [:stderr, data]
+        @message_buffer << msg
+        pop_stdout(timeout)
+      in [:process_died, _pid, exit_code, sig]
+        drain_remaining_to_buffer
+        buffered_stdout = @message_buffer.find { |m| m[0] == :stdout }
+        if buffered_stdout
+          @pending_death = [exit_code, sig]
+          @message_buffer.delete(buffered_stdout)
+          return [:ok, buffered_stdout[1]]
+        end
+        handle_death(exit_code, sig)
+        [:closed, @result]
+      in nil | :timeout
+        nil
+      end
+    end
+
+    # Get the next stdout message, raising on timeout or closed.
+    #
+    # @param timeout [Numeric, :forever] Seconds to wait (default 120)
+    # @return [String] The data
+    # @raise [Timeout] If timeout expires
+    # @raise [ProcessExited] If process has exited
+    def pop_stdout!(timeout = DEFAULT_POP_BANG_TIMEOUT)
+      case pop_stdout(timeout)
+      in [:ok, data]
+        data
+      in nil
+        raise Timeout, "No stdout received within #{timeout}s"
+      in [:closed, _]
         raise ProcessExited, "Process has exited"
       end
+    end
 
-      # Check buffer first
-      msg = drain_until_stdout(timeout: timeout)
+    # Get the next stderr message with timeout.
+    # Buffers stdout for later retrieval.
+    #
+    # @param timeout [Numeric, :forever] Seconds to wait (default 2)
+    # @return [Array, nil] [:ok, data], nil (timeout), or [:closed, result]
+    def pop_stderr(timeout = DEFAULT_POP_TIMEOUT)
+      actual_timeout = (timeout == :forever) ? nil : timeout
+
+      if @exited
+        buffered = @message_buffer.find { |m| m[0] == :stderr }
+        if buffered
+          @message_buffer.delete(buffered)
+          return [:ok, buffered[1]]
+        end
+        return [:closed, @result]
+      end
+
+      if @pending_death
+        buffered = @message_buffer.find { |m| m[0] == :stderr }
+        if buffered
+          @message_buffer.delete(buffered)
+          return [:ok, buffered[1]]
+        end
+        exit_code, sig = @pending_death
+        @pending_death = nil
+        handle_death(exit_code, sig)
+        return [:closed, @result]
+      end
+
+      msg = drain_until_stderr(timeout: actual_timeout)
 
       case msg
-      in [:stdout, data]
-        data
       in [:stderr, data]
-        # If we got stderr, buffer it and try again
+        [:ok, data]
+      in [:stdout, data]
         @message_buffer << msg
-        receive(timeout: timeout)
+        pop_stderr(timeout)
       in [:process_died, _pid, exit_code, sig]
+        drain_remaining_to_buffer
+        buffered_stderr = @message_buffer.find { |m| m[0] == :stderr }
+        if buffered_stderr
+          @pending_death = [exit_code, sig]
+          @message_buffer.delete(buffered_stderr)
+          return [:ok, buffered_stderr[1]]
+        end
         handle_death(exit_code, sig)
-        raise ProcessExited, "Process exited with code #{exit_code}"
-      in :timeout
-        raise Timeout, "No data received within #{timeout}s"
+        [:closed, @result]
+      in nil | :timeout
+        nil
       end
     end
 
-    # Receive from stderr specifically.
+    # Get the next stderr message, raising on timeout or closed.
     #
-    # @param timeout [Float, nil] Seconds to wait
-    # @return [String] The stderr data
-    def receive_stderr(timeout: nil)
-      msg = drain_until_stderr(timeout: timeout)
-
-      case msg
-      in [:stderr, data]
+    # @param timeout [Numeric, :forever] Seconds to wait (default 120)
+    # @return [String] The data
+    # @raise [Timeout] If timeout expires
+    # @raise [ProcessExited] If process has exited
+    def pop_stderr!(timeout = DEFAULT_POP_BANG_TIMEOUT)
+      case pop_stderr(timeout)
+      in [:ok, data]
         data
-      in [:stdout, data]
-        @message_buffer << msg
-        receive_stderr(timeout: timeout)
-      in [:process_died, _pid, exit_code, sig]
-        handle_death(exit_code, sig)
-        raise ProcessExited, "Process exited with code #{exit_code}"
-      in :timeout
+      in nil
         raise Timeout, "No stderr received within #{timeout}s"
+      in [:closed, _]
+        raise ProcessExited, "Process has exited"
       end
     end
 
-    # Check if data is available without blocking.
+    # Enumerator-compatible: get next stdout value, blocking forever.
+    # Raises StopIteration when stream closes.
     #
-    # @return [Boolean]
-    def readable?
-      return true unless @message_buffer.empty?
+    # @return [String] The data
+    # @raise [StopIteration] When stream is closed
+    def next
+      case pop_stdout(:forever)
+      in [:ok, data]
+        data
+      in [:closed, _]
+        raise StopIteration, "Stream closed"
+      end
+    end
 
-      # Try a zero-timeout receive
-      begin
-        msg = receive_message(timeout: 0)
-        @message_buffer << msg if msg
-        !msg.nil?
-      rescue
-        false
+    # Iterate over all stdout lines until process exits.
+    # Required for Enumerable.
+    #
+    # @yield [String] Each line from stdout
+    # @return [Enumerator] If no block given
+    def each
+      return enum_for(:each) unless block_given?
+
+      loop do
+        case pop_stdout(:forever)
+        in [:ok, data]
+          yield data
+        in [:closed, _]
+          break
+        end
       end
     end
 
@@ -254,6 +501,16 @@ module ROTP
     # @raise [Timeout] If timeout expires before exit
     def join(timeout: nil)
       return @result if @exited
+
+      # Check if pop already captured the death
+      if @pending_death
+        exit_code, sig = @pending_death
+        @pending_death = nil
+        handle_death(exit_code, sig)
+        @watcher << [:shutdown] rescue nil
+        @watcher.value rescue nil
+        return @result
+      end
 
       # Drain messages until we get process_died
       loop do
@@ -309,14 +566,15 @@ module ROTP
     # @param timeout [Float] Max time to wait for each line (default 30s)
     # @yield [String] Each line from stdout
     # @return [Result] The process result
+    # @deprecated Use #each instead
     def each_line(timeout: 30.0)
       return enum_for(:each_line, timeout: timeout) unless block_given?
 
       loop do
-        begin
-          line = receive(timeout: timeout)
+        case pop_stdout(timeout)
+        in [:ok, line]
           yield line
-        rescue ProcessExited, Timeout
+        in [:closed, _] | nil
           break
         end
       end
@@ -328,23 +586,17 @@ module ROTP
     #
     # @yield [Symbol, String] [:stdout, line] or [:stderr, line]
     # @return [Result]
-    def each_output
-      return enum_for(:each_output) unless block_given?
+    def each_output(timeout: :forever)
+      return enum_for(:each_output, timeout: timeout) unless block_given?
 
       loop do
-        msg = receive_message
-        case msg
+        case pop(timeout)
         in [:stdout, line]
           yield :stdout, line
         in [:stderr, line]
           yield :stderr, line
-        in [:process_died, _, _, _]
-          handle_death(msg[2], msg[3])
+        in [:closed, _] | nil
           break
-        in [:stdout_closed] | [:stderr_closed]
-          next
-        else
-          next
         end
       end
 
@@ -406,6 +658,11 @@ module ROTP
 
         death_thread = Thread.new do
           status = wait_thr.value
+          # Note: We intentionally don't wait for stdout/stderr threads here.
+          # If we did, [:process_died] would be delayed until all output is
+          # drained, causing hangs with high-output processes.
+          # Instead, receive() uses drain_remaining_to_buffer() to capture
+          # any stdout that arrives after process_died.
           exit_code = status.exited? ? status.exitstatus : nil
           signal = status.signaled? ? Signal.signame(status.termsig) : nil
           inbox.send([:process_died, pid, exit_code, signal])
@@ -489,21 +746,93 @@ module ROTP
       end
     end
 
+    # Waits for stdout or process_died, buffering other messages.
+    # Must avoid infinite loop: don't re-check messages we just buffered.
     def drain_until_stdout(timeout: nil)
+      # First, check buffer for existing stdout/process_died
+      @message_buffer.each_with_index do |msg, idx|
+        if msg[0] == :stdout || msg[0] == :process_died
+          @message_buffer.delete_at(idx)
+          return msg
+        end
+      end
+
+      # Now drain from inbox directly (not via receive_message to avoid re-checking buffer)
       loop do
-        msg = receive_message(timeout: timeout)
+        msg = inbox_receive_raw(timeout: timeout)
         return msg if msg.nil? || msg == :timeout
         return msg if msg[0] == :stdout || msg[0] == :process_died
         @message_buffer << msg
       end
     end
 
+    # Waits for stderr or process_died, buffering other messages.
     def drain_until_stderr(timeout: nil)
+      # First, check buffer for existing stderr/process_died
+      @message_buffer.each_with_index do |msg, idx|
+        if msg[0] == :stderr || msg[0] == :process_died
+          @message_buffer.delete_at(idx)
+          return msg
+        end
+      end
+
+      # Now drain from inbox directly
       loop do
-        msg = receive_message(timeout: timeout)
+        msg = inbox_receive_raw(timeout: timeout)
         return msg if msg.nil? || msg == :timeout
         return msg if msg[0] == :stderr || msg[0] == :process_died
         @message_buffer << msg
+      end
+    end
+
+    # Waits for stdout, stderr, or process_died.
+    def receive_any_output(timeout: nil)
+      # First, check buffer for existing output/process_died
+      @message_buffer.each_with_index do |msg, idx|
+        if msg[0] == :stdout || msg[0] == :stderr || msg[0] == :process_died
+          @message_buffer.delete_at(idx)
+          return msg
+        end
+      end
+
+      # Now drain from inbox directly
+      loop do
+        msg = inbox_receive_raw(timeout: timeout)
+        return msg if msg.nil? || msg == :timeout
+        return msg if msg[0] == :stdout || msg[0] == :stderr || msg[0] == :process_died
+        @message_buffer << msg
+      end
+    end
+
+    # Drain any remaining messages from inbox to buffer (non-blocking).
+    # Used after receiving process_died to capture any output that arrived
+    # between the last stdout read and the death notification.
+    def drain_remaining_to_buffer
+      loop do
+        msg = inbox_receive_raw(timeout: 0)
+        break if msg.nil?  # No more messages
+        @message_buffer << msg unless msg == :timeout
+      end
+    end
+
+    # Low-level inbox receive with timeout, bypassing buffer.
+    # Used by drain_until_* to avoid infinite loops.
+    def inbox_receive_raw(timeout: nil)
+      if timeout.nil?
+        @inbox.receive
+      elsif timeout <= 0
+        timer_port = Ractor::Port.new
+        Thread.new { sleep(0.001); timer_port.send(:timeout) rescue nil }
+        source, msg = Ractor.select(@inbox, timer_port)
+        source == timer_port ? nil : msg
+      else
+        timer_port = Ractor::Port.new
+        Thread.new(timer_port, timeout) do |port, t|
+          sleep(t)
+          port.send(:timeout) rescue nil
+        end
+        source, msg = Ractor.select(@inbox, timer_port)
+        source == timer_port ? :timeout : msg
       end
     end
 
