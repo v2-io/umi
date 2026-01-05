@@ -2,6 +2,7 @@
 books/
 tmp/
 *.epub
+.obsidian/
 
 # Ruby
 *.gem
