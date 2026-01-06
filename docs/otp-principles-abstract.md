@@ -356,6 +356,11 @@ You need a unit of composition larger than "one supervisor tree" that:
 
 **Principle**: Something must be first, and its lifecycle defines system lifecycle.
 
+See [OTP Initialization: A Deep Analysis](./otp-initialization.md) for detailed
+examination of how BEAM's `init` process implements these principles, including
+the two-phase coordinator pattern, boot scripts as data, and the pre-supervision
+layer.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  ROOT COORDINATOR                                                           │
@@ -924,6 +929,8 @@ messages, and monitors, structured thoughtfully.
 
 ## References
 
+- [OTP Initialization: A Deep Analysis](./otp-initialization.md) - Deep dive
+  into BEAM's init process with source code analysis
 - [BEAM/OTP Process Architecture Analysis](./beam-otp-analysis.md) - Detailed
   BEAM-specific analysis with source code references
 - *Release It!* by Michael Nygard - The failure modes these patterns address
