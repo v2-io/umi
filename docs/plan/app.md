@@ -219,6 +219,84 @@ An application IS a supervisor (at its root) with additional metadata.
 
 ---
 
+## Namespace Isolation with Ruby Box
+
+Ruby 4.0's Box feature provides namespace isolation that complements Ractor's
+memory isolation. When combined, applications get **defense in depth**:
+
+| Isolation Type | Mechanism | What It Prevents |
+|----------------|-----------|------------------|
+| Memory | Ractor | One app accessing/corrupting another's state |
+| Namespace | Box | One app's monkey patches affecting another |
+| Class definitions | Box | Constants/classes colliding between apps |
+| Global state | Both | `$global` in one app affecting another |
+
+### The Application Isolation Pattern
+
+Each application gets its own Ractor AND its own Box:
+
+```ruby
+# Coordinator starts each application in isolated Ractor + Box
+def start_application(app_spec)
+  Ractor.new(app_spec, @inbox) do |spec, coord_port|
+    # Create isolated namespace for this application
+    app_box = Ruby::Box.new
+    app_box.require(spec[:entry_point])
+
+    # App's monkey patches stay contained in app_box
+    # Even if the app does:
+    #   class String; def blank? = empty?; end
+    # ...other apps and the coordinator don't see it
+
+    supervisor = app_box.const_get(spec[:supervisor]).new
+    supervisor.start(coord_port)
+  end
+end
+```
+
+### What This Enables
+
+**Contained monkey patching**: An application can use gems that patch core
+classes (like ActiveSupport) without affecting other applications.
+
+**Gem version isolation**: Two applications can theoretically use different
+versions of the same gem if loaded in separate boxes.
+
+**Coordinator protection**: Application code cannot affect the coordinator's
+primitives. Even malicious `class Ractor::Port; def send(*) = nil; end` in an
+app doesn't break the coordinator's communication.
+
+### Hot Code Reload
+
+Ruby Box may enable hot code reload without full process restart:
+
+```
+1. Create new Box for updated application
+2. Start new application instance in new Box (new Ractor)
+3. Drain traffic from old instance
+4. Shut down old instance (old Ractor exits, old Box becomes garbage)
+5. Old code is effectively "unloaded" when Box is collected
+```
+
+This mirrors BEAM's hot code swap but uses Box's namespace isolation rather
+than VM-level module replacement. See [ini.md](./ini.md) for coordinator-level
+details on this pattern.
+
+### Caveats
+
+Ruby Box is experimental (Ruby 4.0):
+
+- Requires `RUBY_BOX=1` environment variable
+- Some gems may not work (native extensions, certain metaprogramming)
+- Performance overhead exists for cross-box calls
+- Not all code patterns are Box-compatible
+
+**Umi should function without Box**, using Ractor isolation alone. Box is a
+defense-in-depth enhancement for environments where application code may be
+untrusted or poorly-behaved.
+
+---
+
 ## Shutdown Semantics
 
 When stopping an application:

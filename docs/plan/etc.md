@@ -260,8 +260,240 @@ If/when distribution becomes relevant:
 
 ---
 
+## Complete Implementation Examples
+
+These are extended examples showing how the pieces fit together. They're
+reference implementations—not production code—meant to illustrate patterns.
+
+### Coordinator Boot Sequence
+
+A complete coordinator skeleton showing the two-phase pattern (bootstrap →
+steady-state), signal handling, and kernel Ractor management:
+
+```ruby
+# lib/umi/coordinator.rb
+#
+# The coordinator IS the main Ractor. It creates ports it can receive on,
+# sets up signal handlers, and runs the main event loop.
+
+module Umi
+  class Coordinator
+    def boot(config)
+      # Phase 0: Set up signal handling (before anything else)
+      @signal_port = Ractor::Port.new
+      @monitor_port = Ractor::Port.new
+      setup_signal_handlers
+
+      # Phase 1: Parse configuration
+      @config = parse_config(config)
+      @status = :starting
+
+      # Phase 2: Start kernel Ractors (halt on death)
+      @kernel = {}
+      @kernel[:registry] = start_kernel_ractor(Umi::Registry)
+      @kernel[:logger] = start_kernel_ractor(Umi::Logger)
+      report_progress(:kernel_started)
+
+      # Check for shutdown between major phases
+      check_for_shutdown
+
+      # Phase 3: Start applications in dependency order
+      @applications = []
+      sorted_apps(@config[:applications]).each do |app_spec|
+        app = start_application(app_spec)
+        @applications << app
+        report_progress(:"#{app.name}_started")
+        check_for_shutdown
+      end
+
+      # Phase 4: Transition to steady state
+      @status = :running
+      report_progress(:started)
+      steady_state_loop
+    end
+
+    private
+
+    def setup_signal_handlers
+      Signal.trap("TERM") { @signal_port << [:shutdown, :sigterm] rescue nil }
+      Signal.trap("INT")  { @signal_port << [:shutdown, :sigint] rescue nil }
+      Signal.trap("HUP")  { @signal_port << [:reload_config] rescue nil }
+      Signal.trap("PIPE", "IGNORE")
+    end
+
+    def start_kernel_ractor(mod)
+      ractor = mod.start_link
+      ractor.monitor(@monitor_port)
+      ractor
+    end
+
+    def start_application(spec)
+      Ractor.new(spec, @monitor_port) do |app_spec, mon_port|
+        # Optional: Create isolated Box for namespace protection
+        # app_box = Ruby::Box.new
+        # app_box.require(app_spec[:entry_point])
+        # supervisor = app_box.const_get(app_spec[:supervisor]).new
+
+        supervisor = app_spec[:mod].new
+        supervisor.start(app_spec[:config])
+      end
+    end
+
+    def check_for_shutdown
+      loop do
+        # Non-blocking check for pending signals
+        ready, value = Ractor.select(@signal_port, yield_value: nil, timeout: 0)
+        break unless ready
+
+        case value
+        in [:shutdown, reason]
+          abort_boot(reason)
+        else
+          # Ignore other signals during boot
+        end
+      end
+    end
+
+    def steady_state_loop
+      loop do
+        ready, value = Ractor.select(@signal_port, @monitor_port)
+
+        case [ready, value]
+        # --- Kernel death = system death ---
+        in [@monitor_port, [:exited, ractor, reason]]
+          if kernel_ractor?(ractor)
+            crash("Kernel Ractor terminated", ractor, reason)
+          end
+
+        # --- Shutdown signals ---
+        in [@signal_port, [:shutdown, reason]]
+          shutdown(reason)
+          break
+
+        # --- Config reload ---
+        in [@signal_port, [:reload_config]]
+          @config = reload_configuration
+          broadcast_to_apps([:config_reloaded, @config])
+        end
+      end
+    end
+
+    def shutdown(reason)
+      @status = :stopping
+
+      # Stop applications in reverse dependency order
+      @applications.reverse.each do |app|
+        shutdown_with_timeout(app, @config[:shutdown_timeout] || 5000)
+      end
+
+      # Stop kernel Ractors (except logger)
+      @kernel.each do |name, ractor|
+        next if name == :logger
+        shutdown_with_timeout(ractor, 1000)
+      end
+
+      # Logger last
+      shutdown_with_timeout(@kernel[:logger], 1000) if @kernel[:logger]
+
+      # Exit with appropriate code
+      case reason
+      when :stop then exit(0)
+      when :sigterm, :sigint then exit(0)
+      else exit(1)
+      end
+    end
+
+    def shutdown_with_timeout(ractor, timeout_ms)
+      ractor.send([:shutdown, timeout_ms]) rescue nil
+      # Wait for exit with timeout, force-kill if needed
+      # (implementation depends on Ractor.select timeout semantics)
+    end
+
+    def kernel_ractor?(ractor)
+      @kernel.values.include?(ractor)
+    end
+
+    def broadcast_to_apps(message)
+      @applications.each do |app|
+        app.send(message) rescue nil
+      end
+    end
+
+    def crash(reason, *details)
+      # Log error, then halt
+      @kernel[:logger]&.send([:error, reason, details]) rescue nil
+      sleep(0.5)  # Let error messages flush
+      exit(1)
+    end
+  end
+end
+```
+
+### External Supervision Patterns
+
+The coordinator cannot supervise itself. External systems handle restarts:
+
+**systemd unit file:**
+
+```ini
+[Unit]
+Description=Umi Application
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ruby /path/to/app/boot.rb
+Restart=on-failure
+RestartSec=1
+# Exit 0 = intentional stop, don't restart
+# Exit non-zero = crash, do restart
+
+# Health check
+ExecStartPost=/bin/sh -c 'until curl -s http://localhost:8080/health; do sleep 1; done'
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Kubernetes liveness probe:**
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: app
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 5
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 8080
+```
+
+**Docker Compose:**
+
+```yaml
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+```
+
+---
+
 ## References
 
 - [strategic-checkpointing.md](../strategic-checkpointing.md) - Full checkpointing analysis
 - [beam-otp-analysis.md](../beam-otp-analysis.md) - Distribution architecture
-- [otp-principles-abstract.md](../otp-principles-abstract.md) - Process groups (Layer 6)
+- [otp-initialization.md](../otp-initialization.md) - Source for coordinator examples
+- [ini.md](./ini.md) - Coordinator design principles

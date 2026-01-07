@@ -152,6 +152,54 @@ Design accordingly.
 
 ---
 
+## Boot Script as Data
+
+**Principle**: The coordinator is an interpreter of declarative boot data, not
+hardcoded startup logic.
+
+This means:
+- Boot order is introspectable (just read the script)
+- Boot is deterministic (same script = same order)
+- Boot can be modified without changing coordinator code
+- Boot scripts can be generated, validated, transmitted
+
+### Boot Script Commands
+
+| Command | Purpose | Why Needed |
+|---------|---------|------------|
+| `progress` | Status reporting | Introspection, debugging, health checks |
+| `kernel_ractor` | Start critical process | Pre-supervision infrastructure |
+| `application` | Start supervised app | Main workload |
+| `config` | Set configuration | Parameterize behavior |
+
+### Conceptual Ruby Boot Script
+
+```ruby
+{
+  progress: :initializing,
+
+  # Pre-supervision layer: halt on death
+  kernel_ractors: [
+    { name: :registry, start: -> { Umi::Registry.start_link } },
+    { name: :logger,   start: -> { Umi::Logger.start_link } },
+  ],
+
+  progress: :kernel_started,
+
+  # Applications: supervised, restart on death
+  applications: [
+    { name: :database,   depends_on: [],          config: {...} },
+    { name: :web_server, depends_on: [:database], config: {...} },
+  ],
+
+  progress: :started
+}
+```
+
+See [etc.md](./etc.md) for complete boot sequence implementation example.
+
+---
+
 ## The Boring Root Principle
 
 The coordinator's reliability is the foundation of the entire system's isolation
@@ -263,6 +311,114 @@ end
 
 Applications don't call `Signal.trap`. They receive messages from coordinator.
 
+### Signal Handler Safety
+
+From spike testing (`spike_j_signal_handler_reentrancy.rb`):
+
+- **`port <<` is signal-safe**: Tested under stress (1000 concurrent main sends
+  + 1000 signal sends), no messages lost, no deadlocks
+- **Signals may coalesce**: Under rapid signaling, the OS may coalesce multiple
+  instances. Design for "at least one" semantics, not "exactly N"
+- **Use `rescue nil`**: Signals can arrive during shutdown when ports are closed
+
+**Best practice**: Keep handlers minimal—just send a message. All complex logic
+belongs in the coordinator's event loop.
+
+### Coordinator Placement Options
+
+Three viable patterns for where the coordinator runs (all tested in spikes):
+
+**Option A: Coordinator IS Main Ractor** (Recommended)
+
+```ruby
+# Main Ractor runs coordinator directly
+@signal_port = Ractor::Port.new
+Signal.trap("TERM") { @signal_port << [:shutdown] rescue nil }
+
+loop do
+  ready, val = Ractor.select(@signal_port, @monitor_port)
+  # ...
+end
+```
+
+**Option B: Child Coordinator, Queue Relay**
+
+```ruby
+# Main relays via Thread::Queue (documented signal-safe)
+signal_queue = Thread::Queue.new
+Signal.trap("TERM") { signal_queue << [:shutdown] }
+
+coord_inbox = start_coordinator_ractor
+Thread.new { loop { coord_inbox << signal_queue.pop } }  # Relay
+```
+
+**Option C: Child Coordinator, Direct Port Send**
+
+```ruby
+# Signal handler sends directly to child's port
+coord_inbox = start_coordinator_ractor
+Signal.trap("TERM") { coord_inbox << [:shutdown] rescue nil }
+```
+
+| Aspect | A: Main | B: Queue Relay | C: Direct Port |
+|--------|---------|----------------|----------------|
+| Complexity | Lowest | Medium | Low |
+| Signal safety | Trivial | Documented | Tested |
+| Relay overhead | None | Thread + Queue | None |
+| Coordinator isolation | None | Full | Full |
+
+**Recommendation**: Use Option A (coordinator IS main) unless you need to isolate
+the coordinator from main Ractor concerns.
+
+### Bootstrap vs Steady-State Signal Handling
+
+**Bootstrap phase**: Coordinator is actively starting things, not in select loop.
+Signals queue automatically. Check between major steps:
+
+```ruby
+def boot(config)
+  setup_signal_handlers
+
+  start_kernel_ractors
+  check_for_shutdown  # Non-blocking check, abort if SIGTERM received
+
+  start_applications
+  check_for_shutdown
+
+  steady_state_loop
+end
+
+def check_for_shutdown
+  loop do
+    result = try_receive(@signal_port, timeout: 0)
+    break if result.nil?
+    case result
+    in [:shutdown, reason] then abort_boot(reason)
+    else # Ignore other signals during boot
+    end
+  end
+end
+```
+
+**Steady-state phase**: Coordinator is in select loop, handles signals as they
+arrive alongside other messages.
+
+---
+
+## Shutdown Modes
+
+BEAM distinguishes three ways to stop, and Umi should too:
+
+| Mode | OS Process | Runtime | When to Use |
+|------|------------|---------|-------------|
+| `stop` | Exits | Stays dead | Intentional shutdown |
+| `reboot` | Exits | Restarts via external | Clean restart, upgrade |
+| `restart` | Stays running | Re-bootstraps | Hot config reload (if supported) |
+
+**For Ruby**: The `restart` mode (re-bootstrap in same process) requires clean
+code unloading. Ruby Box may enable this—see Ruby Box section below. Without
+Box, always use `reboot` (exit and let external supervisor restart).
+
 ---
 
 ## Shutdown Sequence
@@ -284,6 +440,9 @@ Order matters. From BEAM's `init.erl`:
 - `exit(0)` for intentional stop (don't restart)
 - `exit(1)` for crash (do restart)
 
+**Shutdown timeout**: Graceful shutdown can hang. Set a deadline—if processes
+don't exit gracefully in time, force-kill them. Don't wait forever.
+
 ---
 
 ## External Supervision
@@ -303,16 +462,110 @@ The coordinator should:
 
 ---
 
+## Ruby Box: Namespace Isolation
+
+Ruby 4.0 introduces **Ruby Box** (`RUBY_BOX=1`), providing namespace isolation
+within a single process. Combined with Ractors and Ports, this gives Ruby a
+powerful isolation story comparable to BEAM.
+
+### What Box + Ractor Provides
+
+| Concern | Ractor | Box | Together |
+|---------|--------|-----|----------|
+| Memory isolation | Yes (share-nothing) | No | Yes |
+| Parallel execution | Yes | No | Yes |
+| Namespace isolation | No | Yes | Yes |
+| Monkey-patch containment | No | Yes | Yes |
+
+**Defense in depth**: Applications can't corrupt each other's memory (Ractor)
+OR class definitions (Box).
+
+### Box Hierarchy
+
+```
+Root Box (Ruby bootstrap)
+  │
+  ├── Main Box (user's main program)
+  │
+  ├── App Box 1 (created inside App 1's Ractor)
+  │     └── Isolated: monkey patches, globals, constants
+  │
+  └── App Box 2 (created inside App 2's Ractor)
+        └── Isolated: monkey patches, globals, constants
+```
+
+### The Coordinator Protection Pattern
+
+```ruby
+module Umi
+  class Coordinator
+    def start_application(app_spec)
+      Ractor.new(app_spec, @inbox) do |spec, coord_port|
+        # Create isolated box for this application
+        app_box = Ruby::Box.new
+        app_box.require(spec[:entry_point])
+
+        # App's monkey patches stay in app_box
+        # Even if app does: class Ractor::Port; def send(*) = nil; end
+        # ...coordinator's Ractor::Port is unaffected
+
+        supervisor = app_box.const_get(spec[:supervisor]).new
+        supervisor.start(coord_port)
+      end
+    end
+  end
+end
+```
+
+### Hot Code Reload via Box
+
+Ruby Box may enable the `restart` shutdown mode (re-bootstrap without process
+exit):
+
+1. Create new Boxes for updated applications
+2. Start new application instances in new Boxes
+3. Drain traffic from old instances
+4. Shut down old instances (old Boxes become garbage)
+5. Old code is effectively "unloaded" when Box is collected
+
+This mirrors BEAM's hot code swap but uses Box's namespace isolation rather
+than VM-level module replacement.
+
+### Spike Results
+
+From `spike_f_box_ractor.rb`:
+
+- Both mechanisms function together without conflicts
+- Ractor inherits creator's Box context
+- For true isolation, create Box INSIDE Ractor
+- Coordinator protection works—app monkey patches don't affect coordinator
+- Box references are shareable across Ractor boundaries
+
+### Caveats
+
+Ruby Box is experimental:
+- Requires `RUBY_BOX=1` environment variable
+- Some gems may not work (e.g., `active_support/core_ext`)
+- Performance penalty for `rb_funcall()` with Box enabled
+- Native extensions may have issues
+
+See [app.md](./app.md) for application-level namespace isolation patterns and
+[etc.md](./etc.md) for the complete coordinator implementation example showing
+Box integration.
+
+---
+
 ## Open Questions
 
 1. **Boot script format**: Ruby DSL? YAML? Pure Ruby data structures?
 
 2. **Health check mechanism**: HTTP endpoint? File touch? Socket?
 
-3. **Restart vs reboot**: Can we support re-bootstrap in same process? (Ruby
-   doesn't cleanly unload code—probably always need external restart.)
+3. **Hot reload scope**: With Ruby Box, what can change without full restart?
+   Application code seems feasible. Kernel Ractors probably not.
 
-4. **Configuration reload**: How much can change without full restart?
+4. **Box adoption**: When is Box overhead acceptable? Always? Only for
+   untrusted application code?
 
 ---
 
@@ -322,3 +575,4 @@ The coordinator should:
 - [reg.md](./reg.md) - Registry (kernel Ractor, must exist before supervision)
 - [app.md](./app.md) - Application lifecycle (what coordinator coordinates)
 - [sup.md](./sup.md) - Supervision (what applications contain)
+- [etc.md](./etc.md) - Complete coordinator implementation example
