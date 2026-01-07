@@ -436,6 +436,57 @@ integration is essential—callers use names, not Ractor references.
 
 ---
 
+## Review Concerns
+
+_Added during review — these should be resolved before implementation._
+
+1. **Dead child identification race condition** — Lines 273-276 and 363-365:
+   `Ractor#monitor` sends just `:exited` or `:aborted`, so code uses
+   `find { |r| !r.alive? }` to identify the dead child. But if two children die
+   nearly simultaneously, the find could match the wrong one. Consider tracking
+   pending monitors, using a reverse map, or requesting Ruby core add Ractor
+   identity to monitor notifications.
+
+2. **Restart bounding state not shown** — The `max_restarts`/`within_period`
+   mechanism requires tracking restart timestamps per child. Where is this state
+   maintained? How is it reset after the period expires? The implementation
+   sketches omit this critical state.
+
+3. **`:shutdown` message protocol unclear** — Line 308: children get
+   `[:shutdown, timeout]`. But sent to what? The child's `default_port`? A
+   command port the child must expose? The protocol between supervisor and
+   supervised child needs explicit specification.
+
+4. **Force-kill mechanism undefined** — Line 310: "Force-kill anything remaining"
+   but how? `pre.md` doesn't mention a `Ractor.kill` primitive. Can you forcibly
+   terminate a blocked Ractor? Or just abandon it to GC and hope? This needs
+   investigation.
+
+5. **Re-registration on restart incomplete** — Line 395: "re-registration happens
+   automatically on restart" but the implementation sketch doesn't show this. Is
+   it the supervisor's responsibility after calling start? What if registration
+   fails (name collision during restart window)?
+
+6. **DynamicSupervisor sketch lacks bounding** — Shows restart logic but no
+   bounding. As written, it would restart forever on persistent failures. Note
+   as incomplete or add the bounding logic.
+
+7. **Child death identification is O(n)** — The `find { |r| !r.alive? }` pattern
+   is O(n) per death notification. For supervisors with many dynamic children,
+   this adds latency. Consider maintaining a reverse map (Ractor object_id → id).
+
+8. **Proctor composition is critical, not deferrable** — Open question #2 asks
+   about Proctor + supervision. Since Proctor is already implemented with its
+   own internal watcher Ractor, this composition question affects near-term work.
+   Should be resolved before implementing supervision.
+
+9. **Shutdown timeout composition unclear** — Child spec has `shutdown: 5000`,
+   applications have shutdown timeouts, supervisors have shutdown timeouts. How
+   do these compose? Is child's timeout counted within supervisor's? What if
+   sum of children's timeouts exceeds supervisor's timeout?
+
+---
+
 ## References
 
 - [pre.md](./pre.md) - Ruby 4.0 primitives (monitor sends :exited/:aborted, not tuples)

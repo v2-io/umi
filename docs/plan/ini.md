@@ -569,6 +569,52 @@ Box integration.
 
 ---
 
+## Review Concerns
+
+_Added during review — these should be resolved before implementation._
+
+1. **Line 278: "Linked to coordinator"** — But `pre.md` explicitly states
+   bidirectional linking doesn't exist in Ruby 4.0. How is this "linking"
+   achieved? Via monitoring + explicit halt on death detection? This terminology
+   mismatch could confuse future agents. Clarify the mechanism.
+
+2. **`try_receive` function (line 393)** — Used in `check_for_shutdown` but
+   never defined. Is this an assumed utility? It should either be defined in
+   `pre.md` as a pattern or spelled out here using the timer port pattern with
+   zero timeout.
+
+3. **Startup failure handling unspecified** — What happens if an application
+   fails to start during bootstrap? Abort boot? Retry N times? Skip and continue
+   with degraded state? The error paths during bootstrap aren't detailed.
+
+4. **Kernel Ractor transient failures** — Doc says kernel Ractors don't restart
+   (death = halt). But what about transient failures during boot (e.g., registry
+   fails to bind on first try)? Should there be limited retry during bootstrap
+   phase only?
+
+5. **Health check deferred but critical** — Listed as open question, but
+   k8s/systemd integration depends on this. Should have at least a recommended
+   approach sketched (probably a simple TCP socket or file touch).
+
+6. **Configuration loading mechanism** — Boot script shows `config: {...}` but
+   how is configuration actually loaded? Files? Environment? Is config loading
+   itself delegated to a kernel Ractor? Should be addressed.
+
+7. **Dependency cycle detection** — Topological sort mentioned for boot order,
+   but what if dependencies have cycles? Should be detected during boot script
+   validation and reported with a clear error message.
+
+8. **Ruby Box maturity vs. design weight** — Significant design text around Box,
+   but Box is experimental with real caveats (gems may not work, native extension
+   issues). The amount of attention might give false confidence about production
+   readiness. Consider separating "Box-enabled" features as a future phase.
+
+9. **Hot reload underspecified** — "Drain traffic from old instances" is itself
+   a complex coordination problem requiring connection tracking, request counting,
+   or similar. This section is ambitious but doesn't address the mechanism.
+
+---
+
 ## References
 
 - [pre.md](./pre.md) - **Ruby 4.0 primitives** (start here for API details)

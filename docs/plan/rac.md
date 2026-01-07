@@ -510,6 +510,51 @@ See [etc.md](./etc.md) for the full pattern including implementation sketches.
 
 ---
 
+## Review Concerns
+
+_Added during review — these should be resolved before implementation._
+
+1. **Linking question contradicts pre.md** — Open question #2 asks about "Linking
+   vs monitoring" but `pre.md` explicitly states there's no linking primitive in
+   Ruby 4.0. If linking doesn't exist, this question is moot or must be reframed
+   as "how to simulate linking via mutual monitoring." Reconcile or remove.
+
+2. **Timer thread cleanup and lifecycle** — Examples spawn Threads for timers,
+   then call `timer.kill` if unneeded. Is `Thread.kill` safe in Ruby 4.0? If the
+   response comes before timeout, the timer thread sleeps until timeout then
+   sends to a port no one reads. The `rescue nil` handles the closed port error,
+   but the thread lives until timeout expires. Is this acceptable or a resource
+   leak pattern to avoid?
+
+3. **`receive_with_timeout` undefined** — Line 465 uses `receive_with_timeout`
+   but this function isn't defined anywhere. Should reference the timer port
+   pattern from earlier in the document or inline the implementation.
+
+4. **Pool implementation incomplete** — Pool is sketched but implementation is
+   `...`. Should note as unimplemented or provide a complete example, since pools
+   are a common need.
+
+5. **Proctor supervision still unresolved** — Lists three options for
+   Proctor + supervision composition but doesn't recommend one. This was also
+   flagged in `sup.md`. Important to resolve since Proctor is already implemented
+   and will be supervised.
+
+6. **Registry.register ownership ambiguous** — Line 460 shows worker
+   self-registering in `init`. But if supervisor restarts while old worker is
+   still cleaning up, could there be a name collision? Who owns registration—
+   worker or supervisor? What's the deregistration protocol on shutdown?
+
+7. **Fire-and-forget nil pattern undocumented** — Line 362: `[:notify, data, nil]`
+   uses `nil` for reply_port. The server must handle `nil` reply ports explicitly
+   to avoid `nil << response` errors. Document this as a convention.
+
+8. **Thread vs Fiber for timers rationale** — Patterns use Thread for timers.
+   Is this because `sleep` blocks and Fibers require a scheduler? Worth
+   clarifying the rationale, especially for agents unfamiliar with Ruby
+   concurrency tradeoffs.
+
+---
+
 ## References
 
 - [pre.md](./pre.md) - Ruby 4.0 primitives (Port, select, timer patterns, Thread+Ractor)

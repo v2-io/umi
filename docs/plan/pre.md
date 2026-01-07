@@ -796,3 +796,33 @@ All primitives documented here were validated in spikes:
 - [sup.md](./sup.md) - Supervision (builds on monitor primitive)
 - [reg.md](./reg.md) - Registry (uses store_if_absent)
 - [rac.md](./rac.md) - Workers (uses Port, select, timer patterns)
+
+---
+
+## Open Questions / Concerns
+
+_Added during review — these should be resolved before this document is considered authoritative._
+
+1. **Line ~410: Draft comment about `Ractor.yield`** — There's what appears to be
+   an unfinished note: `"# Share port... wait, yield is gone"`. Is `Ractor.yield`
+   actually removed in Ruby 4.0? If so, document this explicitly in the
+   limitations. If not, clean up the comment.
+
+2. **Inconsistent timer handling** — The document correctly recommends monotonic
+   clock (lines 196-202), but the `RactorFiberScheduler` example (line 525) uses
+   `Time.now + timeout`. This inconsistency could propagate to implementations.
+   The example should use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`.
+
+3. **"Setup port pattern" not formally defined** — Referenced as "Better" in the
+   connection pool example but not given a name or explicit definition until the
+   Cross-Ractor Pool Service Pattern. Consider adding a dedicated subsection or
+   at least a clear label.
+
+4. **IO object coordination** — The note that IO objects are "copied" with both
+   Ractors potentially holding handles to the same fd is important but
+   potentially dangerous. What coordination patterns are required? What happens
+   if both Ractors write? This needs more guidance or a warning.
+
+5. **Exception semantics not comprehensive** — What exceptions can `port.send`
+   raise beyond `Ractor::ClosedError`? What about `Ractor.select` on a closed
+   port? Error handling patterns for edge cases aren't fully documented.

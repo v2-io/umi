@@ -493,6 +493,58 @@ services:
 
 ---
 
+## Review Concerns
+
+_Added during review — these should be resolved before implementation._
+
+1. **`Ractor.select` with timeout contradicts pre.md** — Line 345:
+   `Ractor.select(@signal_port, yield_value: nil, timeout: 0)`. But `pre.md`
+   explicitly states `Ractor.select` has no native timeout. This is a critical
+   inconsistency. Either this API exists and `pre.md` is incomplete, or this
+   example uses a non-existent API.
+
+2. **Coordinator example doesn't monitor applications** — Lines 331-339:
+   `start_application` creates a Ractor and passes `@monitor_port` as an
+   argument, but never calls `ractor.monitor(@monitor_port)`. Applications won't
+   generate death notifications. Bug in example—needs `app.monitor(@monitor_port)`
+   after creating the Ractor.
+
+3. **Coordinator has same race condition as sup.md** — Line 365:
+   `@kernel.values.find { |r| !r.alive? }` to identify dead Ractor. Same race
+   condition flagged in `sup.md` review (multiple near-simultaneous deaths).
+   Example should acknowledge this limitation or show a mitigation.
+
+4. **Checkpoint protocol incomplete** — Sketch shows
+   `@supervisor_port << [:checkpoint, self.id, snapshot]` but doesn't explain
+   how supervisor receives this alongside death notifications. Same port?
+   Different port? How are they distinguished in `Ractor.select`?
+
+5. **Marshal limitations unaddressed** — Line 153: `next unless marshalable?(value)`
+   but `marshalable?` is not defined. What's the strategy for workers with
+   non-marshalable state (Procs, IO handles, Ractor references)? Document the
+   limitations or provide a `marshalable?` implementation.
+
+6. **Checkpoint persistence** — Recovery snapshots go to supervisor in-memory.
+   But if supervisor crashes, snapshots are lost. Is disk persistence needed for
+   production robustness? Not addressed.
+
+7. **`risky def` metaprogramming** — Line 166: `risky def call_external_api`
+   uses method decoration. Does this work within Ractors? Method redefinition
+   and `extend` across Ractor boundaries may have shareability constraints.
+   Needs validation.
+
+8. **`sorted_apps` and `shutdown_with_timeout` incomplete** — Both referenced
+   but not implemented. `shutdown_with_timeout` comment says "implementation
+   depends on Ractor.select timeout semantics" but we already established
+   there's no native timeout—should use the timer port pattern from `pre.md`.
+
+9. **Health endpoint origin unclear** — External supervision examples assume
+   `/health` and `/ready` endpoints exist. But where do these come from? A
+   kernel Ractor? A dedicated HTTP server? An application responsibility? Not
+   specified in earlier docs—this was flagged as an open question in `ini.md`.
+
+---
+
 ## References
 
 - [pre.md](./pre.md) - Ruby 4.0 primitives (foundation for all examples here)

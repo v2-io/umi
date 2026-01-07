@@ -357,6 +357,54 @@ monitor them.
 
 ---
 
+## Review Concerns
+
+_Added during review — these should be resolved before implementation._
+
+1. **Box content duplicated with ini.md** — Both documents have substantial,
+   nearly-identical Box sections (hot reload, isolation pattern). Should be
+   consolidated into one location with cross-references to avoid drift.
+
+2. **Application-to-Ractor mapping unclear** — Line 236 says "Each application
+   gets its own Ractor AND its own Box" but the architecture suggests supervisors
+   are the Ractor boundary, and applications are a metadata/lifecycle container.
+   Is it 1:1? Can one Ractor host multiple applications? Clarify the relationship.
+
+3. **`wait_for_running` mechanism undefined** — Coordinator calls
+   `wait_for_running(app)` but how does the application signal it's running?
+   Through a port? A specific message protocol? The handshake between application
+   and coordinator needs specification.
+
+4. **Rollback semantics unexplained** — Line 153: "Atomic start (either fully
+   started or rolled back on failure)" but what is rollback? If app B fails to
+   start, what happens to already-started app A? Stopped? Left running? This has
+   operational implications.
+
+5. **Callback timeouts unspecified** — The `stopping` callback happens before
+   supervisor shutdown. What if draining takes too long? Is there a separate
+   timeout for callbacks vs. child shutdown? Or one shared timeout split between
+   them?
+
+6. **`prepare` error handling** — Shows `[:error, reason]` to abort but doesn't
+   explain consequences. Is the error logged? Does boot abort immediately? Are
+   already-started apps rolled back per concern #4?
+
+7. **Environment detection mechanism** — Spec shows `env: { production: {...} }`
+   but how does the system know which environment? `CONFIG_ENV`? `RUBY_ENV`?
+   `RACK_ENV`? Should be explicit.
+
+8. **Logger dependency inconsistency** — Example shows
+   `depends_on: [:logger, :database]` but ini.md says logger is a kernel Ractor,
+   not an application. Can applications depend on kernel Ractors? Is that a
+   different dependency type? Clarify.
+
+9. **"Contained monkey patching" claim may be optimistic** — Claims ActiveSupport
+   patches stay contained, but gem loading in Ruby is complex. If two apps in
+   separate Boxes require the same gem differently, what actually happens? This
+   needs empirical validation or caveats.
+
+---
+
 ## References
 
 - [pre.md](./pre.md) - Ruby 4.0 primitives (Ractor, Port, Box)
