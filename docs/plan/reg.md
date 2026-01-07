@@ -91,10 +91,16 @@ def register(name, ractor)
 end
 
 # In the registry's event loop:
+# NOTE: Ractor#monitor sends just :exited or :aborted, not tuples.
+# Must track which Ractor died by checking alive? status.
 case @death_port.receive
-in [:exited, ractor, _reason]
-  name = @ractors.delete(ractor)
-  @names.delete(name) if name
+in :exited | :aborted
+  # Find the dead Ractor
+  dead_ractor = @ractors.keys.find { |r| !r.alive? }
+  if dead_ractor
+    name = @ractors.delete(dead_ractor)
+    @names.delete(name) if name
+  end
 end
 ```
 
@@ -307,8 +313,28 @@ This is a separate abstraction that builds on top of basic registry. See
 
 ---
 
+## Implementation Note: Ractor-Local Storage
+
+For simple cases where each Ractor needs its own registry (no cross-Ractor
+lookup), Ruby 4.0 provides `Ractor.store_if_absent`:
+
+```ruby
+def self.storage
+  Ractor.store_if_absent(:registry) { {} }
+end
+```
+
+This is thread-safe lazy initialization within a Ractor. See [pre.md](./pre.md)
+for the primitive details.
+
+For cross-Ractor lookup (the main use case), a central Registry Ractor with
+message passing is required, as shown above.
+
+---
+
 ## References
 
+- [pre.md](./pre.md) - Ruby 4.0 primitives (monitor, store_if_absent, Port)
 - [strategic-checkpointing.md](../strategic-checkpointing.md) - Why names matter for state
 - [ini.md](./ini.md) - Registry as kernel Ractor
 - [sup.md](./sup.md) - Supervisor + Registry patterns, DynamicSupervisor detail

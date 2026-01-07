@@ -360,9 +360,11 @@ module Umi
 
         case [ready, value]
         # --- Kernel death = system death ---
-        in [@monitor_port, [:exited, ractor, reason]]
-          if kernel_ractor?(ractor)
-            crash("Kernel Ractor terminated", ractor, reason)
+        # NOTE: Ractor#monitor sends :exited or :aborted, not tuples
+        in [@monitor_port, status] if status == :exited || status == :aborted
+          dead = @kernel.values.find { |r| !r.alive? }
+          if dead && kernel_ractor?(dead)
+            crash("Kernel Ractor terminated", dead, status)
           end
 
         # --- Shutdown signals ---
@@ -493,6 +495,7 @@ services:
 
 ## References
 
+- [pre.md](./pre.md) - Ruby 4.0 primitives (foundation for all examples here)
 - [strategic-checkpointing.md](../strategic-checkpointing.md) - Full checkpointing analysis
 - [beam-otp-analysis.md](../beam-otp-analysis.md) - Distribution architecture
 - [otp-initialization.md](../otp-initialization.md) - Source for coordinator examples

@@ -512,6 +512,7 @@ See [etc.md](./etc.md) for the full pattern including implementation sketches.
 
 ## References
 
+- [pre.md](./pre.md) - Ruby 4.0 primitives (Port, select, timer patterns, Thread+Ractor)
 - [sup.md](./sup.md) - Supervision (manages workers, DynamicSupervisor)
 - [reg.md](./reg.md) - Registry (finds workers, Registry + DynamicSupervisor pattern)
 - [etc.md](./etc.md) - Future enhancements (checkpointing, adaptive backpressure)

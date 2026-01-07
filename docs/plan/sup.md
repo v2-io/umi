@@ -270,14 +270,15 @@ class Umi::DynamicSupervisor
             reply_port << [:error, :not_found]
           end
 
-        in [^mon, [:exited, ractor, reason]]
-          # Find which child died
-          id, child = children.find { |_, c| c[:ractor] == ractor }
+        in [^mon, status] # :exited or :aborted
+          # NOTE: Ractor#monitor sends just :exited or :aborted, not tuples.
+          # Must find which child died by checking alive? status.
+          id, child = children.find { |_, c| !c[:ractor].alive? }
           next unless id
 
-          case [policy, child[:spec][:restart], reason]
-          in [_, :permanent, _] | [_, :transient, abnormal] if abnormal != :normal
-            # Restart
+          case [policy, child[:spec][:restart], status]
+          in [_, :permanent, _] | [_, :transient, :aborted]
+            # Restart (permanent always, transient on abnormal)
             new_ractor = child[:spec][:start].call
             new_ractor.monitor(mon)
             children[id] = { ractor: new_ractor, spec: child[:spec] }
@@ -359,8 +360,10 @@ class Umi::Supervisor
 
     loop do
       case Ractor.select(@monitor_port, @command_port)
-      in [@monitor_port, [:exited, child, reason]]
-        handle_child_death(child, reason)
+      in [@monitor_port, status] # :exited or :aborted
+        # Find dead child by checking alive? (monitor sends symbol, not tuple)
+        dead = @children.keys.find { |r| !r.alive? }
+        handle_child_death(dead, status) if dead
       in [@command_port, [:shutdown, timeout]]
         shutdown_children(timeout)
         break
@@ -401,6 +404,23 @@ which may restart the entire application or halt the system.
 
 ---
 
+## Key Ruby 4.0 Limitations
+
+Unlike BEAM/OTP, Ruby 4.0 has these constraints (see [pre.md](./pre.md)):
+
+| Limitation | Implication for Supervision |
+|------------|----------------------------|
+| **No linking primitive** | Only unidirectional monitoring; supervisors must explicitly monitor each child |
+| **No exit signals** | Cannot send `:shutdown` to a Ractor—must use message via Port |
+| **Cannot restart in place** | Must spawn new Ractor and migrate state; old Ractor reference becomes invalid |
+| **Ractor refs not serializable** | Use Registry names for persistent references to children |
+
+**Restart semantics**: When a child dies and is restarted, it's a completely new
+Ractor. Callers holding the old reference will fail. This is why Registry
+integration is essential—callers use names, not Ractor references.
+
+---
+
 ## Open Questions
 
 1. **Restart strategy complexity**: Do we need `:rest_for_one`? Or is
@@ -418,6 +438,7 @@ which may restart the entire application or halt the system.
 
 ## References
 
+- [pre.md](./pre.md) - Ruby 4.0 primitives (monitor sends :exited/:aborted, not tuples)
 - [beam-otp-analysis.md](../beam-otp-analysis.md) - kernel_sup detail
 - [ini.md](./ini.md) - Coordinator (supervises applications)
 - [app.md](./app.md) - Applications (contain supervision trees)

@@ -359,6 +359,7 @@ monitor them.
 
 ## References
 
+- [pre.md](./pre.md) - Ruby 4.0 primitives (Ractor, Port, Box)
 - [beam-otp-analysis.md](../beam-otp-analysis.md) - Application lifecycle detail
 - [ini.md](./ini.md) - Coordinator (starts/stops applications)
 - [sup.md](./sup.md) - Supervision (what applications contain)

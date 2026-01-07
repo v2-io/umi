@@ -571,6 +571,7 @@ Box integration.
 
 ## References
 
+- [pre.md](./pre.md) - **Ruby 4.0 primitives** (start here for API details)
 - [otp-initialization.md](../otp-initialization.md) - Detailed `init.erl` analysis
 - [reg.md](./reg.md) - Registry (kernel Ractor, must exist before supervision)
 - [app.md](./app.md) - Application lifecycle (what coordinator coordinates)
