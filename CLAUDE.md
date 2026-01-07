@@ -18,12 +18,14 @@ Read `UMI_FIRST_PRINCIPLES.md` for the full philosophy. The key insight:
 **Implemented:**
 - `Umi::Proctor` - Wraps external processes as Ractor-citizens
 - `Umi::MCPClient` - MCP (Model Context Protocol) client built on Proctor
+- `Umi::Registry` - Name-based Ractor lookup with auto-cleanup on death
+- `Umi::Worker` - Ractor wrapper with call/cast messaging and lifecycle
+- `Umi::Supervisor` - one_for_one restart strategy with restart bounding
 
 **Not yet implemented:**
-- `Umi::Worker` - Ractor wrapper with lifecycle
-- `Umi::Registry` - Name registration
 - Resilience patterns (circuit breaker, retry, bulkhead)
-- Supervision
+- Coordinator (application boot sequencing)
+- Additional supervision strategies (one_for_all, rest_for_one)
 
 ## Project Structure
 
@@ -88,20 +90,68 @@ Key APIs we use:
 - `port.send(msg)` / `port << msg` - Send to port
 - `port.receive` - Blocking receive
 - `Ractor.select(port1, port2, ...)` - Wait on multiple ports
-- `ractor.monitor(port)` - Get notified when Ractor dies
+- `ractor.monitor(port)` - Get notified when Ractor dies (sends `:exited` or `:aborted`)
 - `ractor.value` - Get return value (replaces old `ractor.take`)
+
+**CRITICAL - Shareable Procs:**
+
+Regular Procs/lambdas **cannot cross Ractor boundaries**. Use `Ractor.shareable_proc`:
+
+```ruby
+# WRONG - will fail with "allocator undefined for Proc"
+start_fn = -> { Worker.start_link }
+Ractor.new(start_fn) { |fn| fn.call }
+
+# CORRECT - shareable_proc is isolated from outer scope
+start_fn = Ractor.shareable_proc { Worker.start_link }
+Ractor.new(start_fn) { |fn| fn.call }
+```
+
+The block passed to `shareable_proc` **cannot access outer variables** - it's fully
+isolated. Pass data via Ractor.new arguments instead.
+
+**What IS shareable:**
+- Frozen immutable objects, Symbols, Numerics, `true`/`false`/`nil`
+- `Ractor::Port` instances
+- **Class and Module objects** (so you can pass `WorkerClass` and call methods on it)
+- Procs created with `Ractor.shareable_proc`
 
 **Constraints:**
 - Only port creator can call `receive` on it
-- Objects crossing Ractor boundaries must be frozen or moved
+- `monitor` sends just `:exited` or `:aborted` - NOT which Ractor died (use per-registration ports)
+- `Ractor.select` has **no timeout** - use timer Thread + port pattern
 - Threads work inside Ractors (essential for async I/O)
+
+## Development Commands (devex)
+
+This project uses [devex](~/src/_gems/devex/) for development tasks:
+
+```bash
+dx test              # Run minitest + standalone tests (skip chaos/stress)
+dx test --quick      # Run only minitest (fastest)
+dx test -a           # Run ALL tests including chaos and stress (slow!)
+dx test -s           # Run standalone tests only
+dx test --stress     # Run stress tests
+
+dx lint              # Run RuboCop
+dx lint --fix        # Auto-fix linting issues
+dx gem build         # Build the gem
+dx gem install       # Build and install locally
+```
+
+**Note:** The chaos and stress tests take a long time. Use `--quick` for fast feedback.
 
 ## Testing
 
 ```bash
+# Preferred: use devex
+dx test
+
 # Run individual test files
 ruby test/proctor_test.rb
-ruby test/proctor_api_test.rb
+ruby test/registry_test.rb
+ruby test/worker_test.rb
+ruby test/supervisor_test.rb
 
 # Stress tests (can take a while)
 ruby test/proctor_stress_test.rb

@@ -3,7 +3,7 @@
 # Usage: dot-generator [node_count] [edge_density]
 # Output: DOT language to stdout
 
-node_count = (ARGV[0] || 5).to_i
+node_count   = (ARGV[0] || 5).to_i
 edge_density = (ARGV[1] || 0.3).to_f
 $stdout.sync = true
 
@@ -26,6 +26,7 @@ end
 nodes.each do |from|
   nodes.each do |to|
     next if from == to
+
     if rand < edge_density
       label = rand < 0.5 ? " [label=\"#{rand(1..100)}\"]" : ""
       puts "  #{from} -> #{to}#{label};"

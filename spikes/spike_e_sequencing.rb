@@ -10,7 +10,7 @@ require 'open3'
 
 # Dump all thread backtraces on SIGINT (Ctrl-C) or SIGQUIT (Ctrl-\)
 def dump_threads
-  puts "\n" + "=" * 60
+  puts "\n" + ("=" * 60)
   puts "THREAD DUMP (#{Thread.list.size} threads)"
   puts "=" * 60
   Thread.list.each_with_index do |t, i|
@@ -24,17 +24,17 @@ def dump_threads
       puts "  (no backtrace available)"
     end
   end
-  puts "\n" + "=" * 60
+  puts "\n" + ("=" * 60)
 end
 
 # Also try to show Ractor info
 def dump_ractors
-  puts "\n" + "=" * 60
+  puts "\n" + ("=" * 60)
   puts "RACTOR INFO"
   puts "=" * 60
   puts "Current Ractor: #{Ractor.current.inspect}"
   puts "Main Ractor: #{Ractor.main.inspect}"
-  # Note: There's no Ractor.list in Ruby 4.0
+  # NOTE: There's no Ractor.list in Ruby 4.0
   puts "=" * 60
 end
 
@@ -60,17 +60,15 @@ puts "=" * 60
 
 $stdout.sync = true
 
-def test(name, count: 5)
+def test(name, count: 5, &)
   print "#{name} (#{count}x)... "
   start = Time.now
   begin
-    count.times do |i|
-      yield i
-    end
+    count.times(&)
     elapsed = Time.now - start
     puts "OK (#{elapsed.round(2)}s)"
     true
-  rescue => e
+  rescue StandardError => e
     puts "FAIL: #{e.class}: #{e.message}"
     false
   end
@@ -117,7 +115,9 @@ test("Ractors with popen3") do |i|
     require 'open3'
     stdin, stdout, stderr, wait_thr = Open3.popen3("echo #{n}")
     result = stdout.read
-    stdin.close; stdout.close; stderr.close
+    stdin.close
+    stdout.close
+    stderr.close
     wait_thr.value
     p.send(result.chomp)
     :done
@@ -167,7 +167,7 @@ end
 # =============================================================================
 test("Ractors with command loop", count: 3) do |i|
   port = Ractor::Port.new
-  r = Ractor.new(port, i) do |p, n|
+  r = Ractor.new(port, i) do |p, _n|
     require 'open3'
     stdin, stdout, stderr, wait_thr = Open3.popen3("cat")
 
@@ -193,10 +193,8 @@ test("Ractors with command loop", count: 3) do |i|
       in [:stdin, data]
         stdin.write(data)
         stdin.flush
-      in [:close]
-        stdin.close
-      in [:shutdown]
-        running = false
+      in [:close]    then stdin.close
+      in [:shutdown] then running = false
       end
     end
 
@@ -233,7 +231,7 @@ test("Ractors with Ractor.select") do |i|
     :done
   end
 
-  source, msg = Ractor.select(port)
+  Ractor.select(port)
   r.value
 end
 
@@ -251,9 +249,16 @@ test("Ractors with select + timer Thread") do |i|
   end
 
   # Timer thread
-  Thread.new { sleep 1.0; timer_port.send(:timeout) rescue nil }
+  Thread.new do
+    sleep 1.0
+    begin
+      timer_port.send(:timeout)
+    rescue StandardError
+      nil
+    end
+  end
 
-  source, msg = Ractor.select(port, timer_port)
+  Ractor.select(port, timer_port)
   r.value
 end
 
@@ -272,7 +277,11 @@ test("Ractors with monitor") do |i|
   msgs = []
   2.times { msgs << port.receive }  # value + :exited
 
-  r.value rescue nil
+  begin
+    r.value
+  rescue StandardError
+    nil
+  end
 end
 
 # =============================================================================
@@ -281,7 +290,7 @@ end
 test("Full Proctor pattern", count: 3) do |i|
   inbox = Ractor::Port.new
 
-  watcher = Ractor.new(inbox, i) do |inbox, n|
+  watcher = Ractor.new(inbox, i) do |inbox, _n|
     require 'open3'
     stdin, stdout, stderr, wait_thr = Open3.popen3("cat")
     pid = wait_thr.pid
@@ -313,14 +322,29 @@ test("Full Proctor pattern", count: 3) do |i|
       cmd = Ractor.receive
       case cmd
       in [:stdin, data]
-        stdin.write(data) rescue nil
-        stdin.flush rescue nil
-      in [:close_stdin]
-        stdin.close rescue nil
-      in [:kill, sig]
-        Process.kill(sig, pid) rescue nil
-      in [:shutdown]
-        running = false
+        begin
+          stdin.write(data)
+        rescue StandardError
+          nil
+        end
+        begin
+          stdin.flush
+        rescue StandardError
+          nil
+        end
+      in [:close_stdin] then begin
+        stdin.close
+      rescue StandardError
+        StandardError StandardError StandardError StandardError StandardError nil
+      end
+
+      in [:kill, sig] then begin
+        Process.kill(sig, pid)
+      rescue StandardError
+        StandardError StandardError StandardError StandardError StandardError nil
+      end
+
+      in [:shutdown] then running = false
       end
     end
 

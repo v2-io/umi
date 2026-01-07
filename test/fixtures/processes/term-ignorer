@@ -7,22 +7,23 @@ $stdout.sync = true
 $stderr.sync = true
 
 Signal.trap("TERM") do
-  $stderr.puts "[#{$$}] SIGTERM ignored! Use kill -9 #{$$}"
+  warn "[#{$$}] SIGTERM ignored! Use kill -9 #{$$}"
 end
 
 Signal.trap("INT") do
-  $stderr.puts "[#{$$}] SIGINT ignored too!"
+  warn "[#{$$}] SIGINT ignored too!"
 end
 
 puts "[#{$$}] started, ignoring TERM and INT (use kill -9)"
 
 loop do
-  if IO.select([$stdin], nil, nil, 0.2 + rand * 0.3)
+  if IO.select([$stdin], nil, nil, 0.2 + (rand * 0.3))
     line = $stdin.gets
     break unless line
+
     puts "still here: #{line}"
-  else
+  elsif rand < 0.1
     # Occasional heartbeat
-    puts "[heartbeat]" if rand < 0.1
+    puts "[heartbeat]"
   end
 end

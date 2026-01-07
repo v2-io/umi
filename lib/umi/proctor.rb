@@ -74,7 +74,7 @@ module Umi
     class ProcessExited < StandardError; end
 
     # Default timeouts (in seconds)
-    DEFAULT_POP_TIMEOUT = 2
+    DEFAULT_POP_TIMEOUT      = 2
     DEFAULT_POP_BANG_TIMEOUT = 120
 
     # Result of a completed process
@@ -82,10 +82,10 @@ module Umi
       attr_reader :pid, :exit_code, :signal, :duration
 
       def initialize(pid:, exit_code:, signal:, duration:)
-        @pid = pid
+        @pid       = pid
         @exit_code = exit_code
-        @signal = signal
-        @duration = duration
+        @signal    = signal
+        @duration  = duration
       end
 
       def success?
@@ -111,8 +111,8 @@ module Umi
     # @param opts [Hash] Options (see #initialize)
     # @yield [Proctor] The proctor instance
     # @return [Result] The process result
-    def self.open(cmd, *args, **opts)
-      proctor = new(cmd, *args, **opts)
+    def self.open(cmd, *, **)
+      proctor = new(cmd, *, **)
       begin
         yield proctor
       ensure
@@ -136,19 +136,19 @@ module Umi
     # @param chdir [String] Working directory (optional)
     # @param stderr [Symbol] :separate (default), :merge, or :discard
     def initialize(cmd, *args, env: {}, chdir: nil, stderr: :separate)
-      @cmd = cmd
-      @args = args
-      @env = env
-      @chdir = chdir
+      @cmd         = cmd
+      @args        = args
+      @env         = env
+      @chdir       = chdir
       @stderr_mode = stderr
 
-      @inbox = Ractor::Port.new
-      @started_at = Time.now
-      @exited = false
-      @result = nil
+      @inbox          = Ractor::Port.new
+      @started_at     = Time.now
+      @exited         = false
+      @result         = nil
       @exit_callbacks = []
       @message_buffer = []
-      @pending_death = nil  # [exit_code, signal] if we got process_died but have buffered output
+      @pending_death  = nil  # [exit_code, signal] if we got process_died but have buffered output
 
       start_watcher
     end
@@ -161,7 +161,7 @@ module Umi
       send_command(:stdin, data)
       self
     end
-    alias_method :write, :<<
+    alias :write :<<
 
     # Send data with a newline appended.
     #
@@ -192,7 +192,7 @@ module Umi
         msg = receive_message(timeout: 0)
         @message_buffer << msg if msg
         msg
-      rescue
+      rescue StandardError
         nil
       end
     end
@@ -222,10 +222,10 @@ module Umi
     #   in [:closed, result] then cleanup(result)
     #   end
     def pop(timeout = DEFAULT_POP_TIMEOUT)
-      actual_timeout = (timeout == :forever) ? nil : timeout
+      actual_timeout = timeout == :forever ? nil : timeout
 
       if @exited
-        buffered = @message_buffer.find { |m| m[0] == :stdout || m[0] == :stderr }
+        buffered = @message_buffer.find { |m| [:stdout, :stderr].include?(m[0]) }
         if buffered
           @message_buffer.delete(buffered)
           return buffered  # [:stdout, data] or [:stderr, data]
@@ -234,7 +234,7 @@ module Umi
       end
 
       if @pending_death
-        buffered = @message_buffer.find { |m| m[0] == :stdout || m[0] == :stderr }
+        buffered = @message_buffer.find { |m| [:stdout, :stderr].include?(m[0]) }
         if buffered
           @message_buffer.delete(buffered)
           return buffered
@@ -252,7 +252,7 @@ module Umi
         msg
       in [:process_died, _pid, exit_code, sig]
         drain_remaining_to_buffer
-        buffered = @message_buffer.find { |m| m[0] == :stdout || m[0] == :stderr }
+        buffered = @message_buffer.find { |m| [:stdout, :stderr].include?(m[0]) }
         if buffered
           @pending_death = [exit_code, sig]
           @message_buffer.delete(buffered)
@@ -292,7 +292,7 @@ module Umi
     # @param timeout [Numeric, :forever] Seconds to wait (default 2)
     # @return [Array, nil] [:ok, data], nil (timeout), or [:closed, result]
     def pop_stdout(timeout = DEFAULT_POP_TIMEOUT)
-      actual_timeout = (timeout == :forever) ? nil : timeout
+      actual_timeout = timeout == :forever ? nil : timeout
 
       if @exited
         buffered = @message_buffer.find { |m| m[0] == :stdout }
@@ -361,7 +361,7 @@ module Umi
     # @param timeout [Numeric, :forever] Seconds to wait (default 2)
     # @return [Array, nil] [:ok, data], nil (timeout), or [:closed, result]
     def pop_stderr(timeout = DEFAULT_POP_TIMEOUT)
-      actual_timeout = (timeout == :forever) ? nil : timeout
+      actual_timeout = timeout == :forever ? nil : timeout
 
       if @exited
         buffered = @message_buffer.find { |m| m[0] == :stderr }
@@ -508,8 +508,16 @@ module Umi
         exit_code, sig = @pending_death
         @pending_death = nil
         handle_death(exit_code, sig)
-        @watcher << [:shutdown] rescue nil
-        @watcher.value rescue nil
+        begin
+          @watcher << [:shutdown]
+        rescue
+          nil
+        end
+        begin
+          @watcher.value
+        rescue
+          nil
+        end
         return @result
       end
 
@@ -521,7 +529,11 @@ module Umi
         in [:process_died, _pid, exit_code, sig]
           handle_death(exit_code, sig)
           @watcher << [:shutdown]  # Direct send, bypass exited check
-          @watcher.value rescue nil  # Wait for watcher to clean up
+          begin
+            @watcher.value
+          rescue
+            nil
+          end  # Wait for watcher to clean up
           return @result
         in [:stdout, _] | [:stderr, _]
           # Discard remaining output
@@ -558,9 +570,7 @@ module Umi
     # Get the result if the process has exited.
     #
     # @return [Result, nil]
-    def result
-      @result
-    end
+    attr_reader :result
 
     # Iterate over stdout lines until process exits.
     #
@@ -612,15 +622,15 @@ module Umi
     private
 
     def start_watcher
-      cmd = @cmd
-      args = @args
-      env = @env
-      chdir = @chdir
+      cmd         = @cmd
+      args        = @args
+      env         = @env
+      chdir       = @chdir
       stderr_mode = @stderr_mode
-      inbox = @inbox
-      parent = Ractor.current
+      inbox       = @inbox
+      parent      = Ractor.current
 
-      @watcher = Ractor.new(cmd, args, env, chdir, stderr_mode, inbox, parent) do |cmd, args, env, chdir, stderr_mode, inbox, parent|
+      @watcher = Ractor.new(cmd, args, env, chdir, stderr_mode, inbox, parent) do |cmd, args, env, chdir, stderr_mode, inbox, _parent|
         require 'open3'
 
         # Build spawn options
@@ -644,11 +654,11 @@ module Umi
         stderr_thread = Thread.new do
           case stderr_mode
           when :separate
-            while line = stderr.gets
+            while (line = stderr.gets)
               inbox.send([:stderr, line])
             end
           when :merge
-            while line = stderr.gets
+            while (line = stderr.gets)
               inbox.send([:stdout, line])  # Send as stdout
             end
           when :discard
@@ -659,7 +669,7 @@ module Umi
 
         death_thread = Thread.new do
           status = wait_thr.value
-          # Note: We intentionally don't wait for stdout/stderr threads here.
+          # NOTE: We intentionally don't wait for stdout/stderr threads here.
           # If we did, [:process_died] would be delayed until all output is
           # drained, causing hangs with high-output processes.
           # Instead, receive() uses drain_remaining_to_buffer() to capture
@@ -682,9 +692,17 @@ module Umi
               inbox.send([:stdin_broken])
             end
           in [:close_stdin]
-            stdin.close rescue nil
+            begin
+              stdin.close
+            rescue
+              nil
+            end
           in [:kill, sig]
-            Process.kill(sig, pid) rescue nil
+            begin
+              Process.kill(sig, pid)
+            rescue
+              nil
+            end
           in [:shutdown]
             running = false
           end
@@ -711,6 +729,7 @@ module Umi
 
     def send_command(*cmd)
       raise ProcessExited, "Process has exited" if @exited
+
       @watcher << cmd
     end
 
@@ -724,7 +743,8 @@ module Umi
         # Non-blocking check - just return nil if nothing available
         # Unfortunately Ractor.select doesn't support non-blocking, so use tiny timer
         timer_port = Ractor::Port.new
-        Thread.new { sleep(0.001); timer_port.send(:timeout) }
+        Thread.new { sleep(0.001)
+ timer_port.send(:timeout) }
 
         source, msg = Ractor.select(@inbox, timer_port)
         source == timer_port ? nil : msg
@@ -734,7 +754,11 @@ module Umi
         # Use Thread instead of Ractor to avoid accumulating Ractors
         Thread.new(timer_port, timeout) do |port, t|
           sleep(t)
-          port.send(:timeout) rescue nil
+          begin
+            port.send(:timeout)
+          rescue
+            nil
+          end
         end
 
         source, msg = Ractor.select(@inbox, timer_port)
@@ -752,7 +776,7 @@ module Umi
     def drain_until_stdout(timeout: nil)
       # First, check buffer for existing stdout/process_died
       @message_buffer.each_with_index do |msg, idx|
-        if msg[0] == :stdout || msg[0] == :process_died
+        if [:stdout, :process_died].include?(msg[0])
           @message_buffer.delete_at(idx)
           return msg
         end
@@ -762,7 +786,8 @@ module Umi
       loop do
         msg = inbox_receive_raw(timeout: timeout)
         return msg if msg.nil? || msg == :timeout
-        return msg if msg[0] == :stdout || msg[0] == :process_died
+        return msg if [:stdout, :process_died].include?(msg[0])
+
         @message_buffer << msg
       end
     end
@@ -771,7 +796,7 @@ module Umi
     def drain_until_stderr(timeout: nil)
       # First, check buffer for existing stderr/process_died
       @message_buffer.each_with_index do |msg, idx|
-        if msg[0] == :stderr || msg[0] == :process_died
+        if [:stderr, :process_died].include?(msg[0])
           @message_buffer.delete_at(idx)
           return msg
         end
@@ -781,7 +806,8 @@ module Umi
       loop do
         msg = inbox_receive_raw(timeout: timeout)
         return msg if msg.nil? || msg == :timeout
-        return msg if msg[0] == :stderr || msg[0] == :process_died
+        return msg if [:stderr, :process_died].include?(msg[0])
+
         @message_buffer << msg
       end
     end
@@ -790,7 +816,7 @@ module Umi
     def receive_any_output(timeout: nil)
       # First, check buffer for existing output/process_died
       @message_buffer.each_with_index do |msg, idx|
-        if msg[0] == :stdout || msg[0] == :stderr || msg[0] == :process_died
+        if [:stdout, :stderr, :process_died].include?(msg[0])
           @message_buffer.delete_at(idx)
           return msg
         end
@@ -800,7 +826,8 @@ module Umi
       loop do
         msg = inbox_receive_raw(timeout: timeout)
         return msg if msg.nil? || msg == :timeout
-        return msg if msg[0] == :stdout || msg[0] == :stderr || msg[0] == :process_died
+        return msg if [:stdout, :stderr, :process_died].include?(msg[0])
+
         @message_buffer << msg
       end
     end
@@ -812,6 +839,7 @@ module Umi
       loop do
         msg = inbox_receive_raw(timeout: 0)
         break if msg.nil?  # No more messages
+
         @message_buffer << msg unless msg == :timeout
       end
     end
@@ -823,14 +851,23 @@ module Umi
         @inbox.receive
       elsif timeout <= 0
         timer_port = Ractor::Port.new
-        Thread.new { sleep(0.001); timer_port.send(:timeout) rescue nil }
+        Thread.new { sleep(0.001)
+ begin
+                                     timer_port.send(:timeout)
+                                   rescue
+                                     nil
+                                   end }
         source, msg = Ractor.select(@inbox, timer_port)
         source == timer_port ? nil : msg
       else
         timer_port = Ractor::Port.new
         Thread.new(timer_port, timeout) do |port, t|
           sleep(t)
-          port.send(:timeout) rescue nil
+          begin
+            port.send(:timeout)
+          rescue
+            nil
+          end
         end
         source, msg = Ractor.select(@inbox, timer_port)
         source == timer_port ? :timeout : msg
@@ -840,13 +877,13 @@ module Umi
     def handle_death(exit_code, signal)
       return if @exited
 
-      @exited = true
+      @exited  = true
       duration = Time.now - @started_at
       @result = Result.new(
-        pid: @pid,
+        pid:       @pid,
         exit_code: exit_code,
-        signal: signal&.to_sym,
-        duration: duration
+        signal:    signal&.to_sym,
+        duration:  duration
       )
 
       @exit_callbacks.each { |cb| cb.call(@result) }

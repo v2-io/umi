@@ -18,8 +18,8 @@ puts
 def test(description, timeout_sec: 3)
   print "Testing: #{description}... "
   begin
-    result = nil
-    thread = Thread.new { result = yield }
+    result  = nil
+    thread  = Thread.new { result = yield }
     success = thread.join(timeout_sec)
     if success
       puts "SUCCESS"
@@ -31,7 +31,7 @@ def test(description, timeout_sec: 3)
       puts "  Test hung for #{timeout_sec}s"
       nil
     end
-  rescue => e
+  rescue StandardError => e
     puts "FAILED"
     puts "  Error: #{e.class}: #{e.message}"
     nil
@@ -41,7 +41,7 @@ end
 # ============================================================
 # BASELINE: Understand Ruby 4.0 Ractor API first
 # ============================================================
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "BASELINE: Ruby 4.0 Ractor API Discovery"
 puts "=" * 60
 
@@ -93,7 +93,7 @@ end
 # ============================================================
 # Q1: Can IO objects (pipes from Process.spawn) be passed to a Ractor?
 # ============================================================
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "Q1: Can IO pipes cross Ractor boundaries?"
 puts "=" * 60
 
@@ -109,7 +109,11 @@ test("Send pipe read-end via Ractor.new argument") do
     "Ractor read: #{data}"
   end
   result = r.value
-  rd.close rescue nil
+  begin
+    rd.close
+  rescue StandardError
+    nil
+  end
   result
 end
 
@@ -126,7 +130,11 @@ test("Send pipe via default_port") do
 
   r.default_port.send(wr)
   result = r.value
-  wr.close rescue nil
+  begin
+    wr.close
+  rescue StandardError
+    nil
+  end
   data = rd.read
   rd.close
   "#{result}, main read: #{data}"
@@ -203,14 +211,15 @@ puts "\n--- Test 1e: IO shareability check ---"
 test("Is IO shareable?") do
   rd, wr = IO.pipe
   shareable = Ractor.shareable?(rd)
-  rd.close; wr.close
+  rd.close
+  wr.close
   "IO shareable? #{shareable}"
 end
 
 # ============================================================
 # Q2: Can Ractor::Port objects be passed between Ractors?
 # ============================================================
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "Q2: Can Ractor::Port be passed between Ractors?"
 puts "=" * 60
 
@@ -238,8 +247,14 @@ puts "\n--- Test 2c: Multiple Ractors sending to same Port ---"
 test("Multiple Ractors write to same Port") do
   port = Ractor::Port.new  # Main owns
 
-  r1 = Ractor.new(port) { |p| p.send("from r1"); "r1 done" }
-  r2 = Ractor.new(port) { |p| p.send("from r2"); "r2 done" }
+  r1 = Ractor.new(port) do |p|
+    p.send("from r1")
+    "r1 done"
+  end
+  r2 = Ractor.new(port) do |p|
+    p.send("from r2")
+    "r2 done"
+  end
 
   msg1 = port.receive  # Main receives
   msg2 = port.receive
@@ -253,12 +268,10 @@ test("Can only creator receive from Port?") do
   port = Ractor::Port.new  # Main creates
 
   r = Ractor.new(port) do |p|
-    begin
-      msg = p.receive  # Try to receive in non-creator
-      "received: #{msg}"
-    rescue => e
-      "Error: #{e.class} - #{e.message}"
-    end
+    msg = p.receive  # Try to receive in non-creator
+    "received: #{msg}"
+  rescue StandardError => e
+    "Error: #{e.class} - #{e.message}"
   end
 
   port.send("test message")  # Send something to unblock if it tries
@@ -293,13 +306,12 @@ test("Send Port via another Port - send directions") do
   r = Ractor.new(outer_port) do |op|
     # Ractor needs to receive from outer_port, but only main can receive!
     # This should fail - testing the constraint
-    begin
-      received_port = op.receive
-      received_port.send("message via received port")
-      "ractor received port and sent"
-    rescue => e
-      "Error: #{e.class}"
-    end
+
+    received_port = op.receive
+    received_port.send("message via received port")
+    "ractor received port and sent"
+  rescue StandardError => e
+    "Error: #{e.class}"
   end
 
   outer_port.send(inner_port)
@@ -325,7 +337,7 @@ end
 # ============================================================
 # Q3: What happens when we try to share non-frozen objects?
 # ============================================================
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "Q3: What errors do we get with non-shareable objects?"
 puts "=" * 60
 
@@ -367,9 +379,7 @@ end
 puts "\n--- Test 3f: Custom class instance ---"
 test("Pass custom class instance to Ractor") do
   class MyData
-    def initialize(val)
-      @val = val
-    end
+    def initialize(val) = @val = val
     attr_reader :val
   end
 
@@ -394,16 +404,17 @@ test("Shareability of different types") do
   results[:integer] = Ractor.shareable?(42)
   results[:symbol] = Ractor.shareable?(:sym)
   results[:nil] = Ractor.shareable?(nil)
-  results[:range_frozen] = Ractor.shareable?((1..10).freeze)
+  results[:range_frozen] = Ractor.shareable?(1..10)
   results[:range_mutable] = Ractor.shareable?(1..10)
-  results[:frozen_array] = Ractor.shareable?([1,2,3].freeze)
+  results[:frozen_array] = Ractor.shareable?([1, 2, 3].freeze)
   results[:ractor] = Ractor.shareable?(Ractor.current)
   results[:ractor_port] = Ractor.shareable?(Ractor::Port.new)
-  results[:proc] = Ractor.shareable?(->{ 42 })
+  results[:proc] = Ractor.shareable?(-> { 42 })
 
   rd, wr = IO.pipe
   results[:io_pipe] = Ractor.shareable?(rd)
-  rd.close; wr.close
+  rd.close
+  wr.close
 
   results
 end
@@ -411,7 +422,7 @@ end
 # ============================================================
 # Q4: Move vs Share semantics for IO?
 # ============================================================
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "Q4: Move vs Share semantics for IO?"
 puts "=" * 60
 
@@ -434,7 +445,7 @@ test("Use IO in main after passing to Ractor (move semantics?)") do
     # Can we still check rd here?
     can_read = rd.read(1)  # Try to read
     "Main could still read: #{can_read.inspect}, Ractor: #{r.value}"
-  rescue => e
+  rescue StandardError => e
     "Main got error: #{e.class} - #{e.message}, Ractor: #{r.value}"
   end
 end
@@ -446,18 +457,22 @@ test("Same IO to multiple Ractors") do
   wr.close
 
   begin
-    r1 = Ractor.new(rd) { |p| "r1 has pipe" }
-    r2 = Ractor.new(rd) { |p| "r2 has pipe" }
+    r1 = Ractor.new(rd) { |_p| "r1 has pipe" }
+    r2 = Ractor.new(rd) { |_p| "r2 has pipe" }
     [r1.value, r2.value]
-  rescue => e
-    rd.close rescue nil
+  rescue StandardError => e
+    begin
+      rd.close
+    rescue StandardError
+      nil
+    end
     "Error: #{e.class} - #{e.message}"
   end
 end
 
 puts "\n--- Test 4c: IO object_id before and after ---"
 test("Check if IO is moved or copied") do
-  rd, wr = IO.pipe
+  rd, = IO.pipe
   original_id = rd.object_id
 
   r = Ractor.new(rd) do |pipe|
@@ -469,7 +484,7 @@ test("Check if IO is moved or copied") do
     after_id = rd.object_id
     result = r.value
     "Original: #{original_id}, After: #{after_id}, #{result}"
-  rescue => e
+  rescue StandardError => e
     result = r.value
     "Error accessing original: #{e.class}, #{result}"
   end
@@ -477,7 +492,7 @@ end
 
 puts "\n--- Test 4d: Test if move option exists ---"
 test("Port#send move: option check") do
-  port = Ractor::Port.new
+  Ractor::Port.new
   rd, wr = IO.pipe
   wr.write("move test")
   wr.close
@@ -495,7 +510,7 @@ test("Port#send move: option check") do
     begin
       rd.closed?
       "rd still accessible after move:true, Ractor: #{r.value}"
-    rescue => e
+    rescue StandardError => e
       "rd inaccessible after move: #{e.class}, Ractor: #{r.value}"
     end
   rescue ArgumentError => e
@@ -507,7 +522,7 @@ end
 # ============================================================
 # EXTRA: Ractor references and select
 # ============================================================
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "EXTRA: Ractor references and Ractor.select"
 puts "=" * 60
 
@@ -532,8 +547,14 @@ test("Ractor.select with multiple ports") do
   p1 = Ractor::Port.new
   p2 = Ractor::Port.new
 
-  Ractor.new(p1) { |p| sleep 0.05; p.send("from p1") }
-  Ractor.new(p2) { |p| sleep 0.1; p.send("from p2") }
+  Ractor.new(p1) do |p|
+    sleep 0.05
+    p.send("from p1")
+  end
+  Ractor.new(p2) do |p|
+    sleep 0.1
+    p.send("from p2")
+  end
 
   results = []
   2.times do
@@ -560,7 +581,7 @@ test("Ractor streams multiple values via Port (replaces yield)") do
   results
 end
 
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "SPIKE COMPLETE"
 puts "=" * 60
 

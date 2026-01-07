@@ -31,10 +31,10 @@ puts "-" * 40
 
 # Check various JIT-related constants and methods
 jit_info = {
-  ruby_version: RUBY_VERSION,
+  ruby_version:     RUBY_VERSION,
   ruby_description: RUBY_DESCRIPTION,
-  zjit_defined: defined?(RubyVM::ZJIT),
-  yjit_defined: defined?(RubyVM::YJIT),
+  zjit_defined:     defined?(RubyVM::ZJIT),
+  yjit_defined:     defined?(RubyVM::YJIT)
 }
 
 # Check if ZJIT module exists and has useful methods
@@ -44,18 +44,16 @@ if defined?(RubyVM::ZJIT)
 end
 
 # Check if YJIT module exists
-if defined?(RubyVM::YJIT)
-  jit_info[:yjit_enabled] = RubyVM::YJIT.enabled? rescue "method not available"
-end
+jit_info[:yjit_enabled] = RubyVM::YJIT.enabled? rescue "method not available" if defined?(RubyVM::YJIT)
 
 jit_info.each do |k, v|
   puts "  #{k}: #{v.inspect}"
 end
 
 # Determine which JIT is active
-active_jit = if defined?(RubyVM::ZJIT) && (RubyVM::ZJIT.enabled? rescue false)
+active_jit = if defined?(RubyVM::ZJIT) && RubyVM::ZJIT.enabled? rescue false
                :zjit
-             elsif defined?(RubyVM::YJIT) && (RubyVM::YJIT.enabled? rescue false)
+             elsif defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled? rescue false
                :yjit
              else
                :none
@@ -74,6 +72,7 @@ puts "-" * 40
 # A simple computation that should be JIT-able
 def fibonacci(n)
   return n if n <= 1
+
   fibonacci(n - 1) + fibonacci(n - 2)
 end
 
@@ -88,7 +87,7 @@ fib_result = Ractor.new do
 end.value
 
 puts "  fibonacci(25) in Ractor = #{fib_result}"
-expected = 75025
+expected = 75_025
 if fib_result == expected
   puts "  [PASS] Q2: Basic computation correct in Ractor"
 else
@@ -105,10 +104,10 @@ puts "-" * 40
 # Hot loop that should trigger JIT compilation
 def hot_loop(iterations)
   sum = 0
-  i = 0
+  i   = 0
   while i < iterations
     sum += i * 2
-    i += 1
+    i   += 1
   end
   sum
 end
@@ -116,9 +115,9 @@ end
 iterations = 100_000
 
 # Time it in main Ractor
-start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+start       = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 main_result = hot_loop(iterations)
-main_time = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
+main_time   = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
 
 # Time it in separate Ractor
 ractor_result, ractor_time = Ractor.new(iterations) do |n|
@@ -137,7 +136,7 @@ else
   puts "  [FAIL] Q3: Results don't match!"
 end
 
-# Note: We can't directly compare times as JIT warmup varies
+# NOTE: We can't directly compare times as JIT warmup varies
 puts
 
 #------------------------------------------------------------------------------
@@ -165,14 +164,13 @@ worker = Ractor.new(port) do |p|
 end
 
 # Send multiple requests
-requests = [1000, 5000, 10000, 50000]
-results = []
+requests = [1000, 5000, 10_000, 50_000]
+results  = []
 
 requests.each do |n|
   worker.send([:compute, n])
   case port.receive
-  in [:result, r]
-    results << [n, r]
+  in [:result, r] then results << [n, r]
   end
 end
 
@@ -203,7 +201,7 @@ puts "-" * 40
 
 # Spawn multiple Ractors doing heavy computation simultaneously
 num_ractors = 4
-work_size = 50_000
+work_size   = 50_000
 
 # Define a CPU-intensive shareable computation
 def compute_intensive(n)
@@ -211,7 +209,7 @@ def compute_intensive(n)
   sum = 0
   n.times do |i|
     sum += i
-    sum = sum % 1_000_000_007 if sum > 1_000_000_000
+    sum %= 1_000_000_007 if sum > 1_000_000_000
   end
   sum
 end
@@ -284,11 +282,13 @@ puts "-" * 40
 # Mutual recursion - tests JIT handling of complex call graphs
 def even?(n)
   return true if n == 0
+
   odd?(n - 1)
 end
 
 def odd?(n)
   return false if n == 0
+
   even?(n - 1)
 end
 
@@ -357,7 +357,11 @@ puts "Active JIT: #{active_jit}"
 puts "Ruby: #{RUBY_VERSION}"
 puts
 puts "Key findings:"
-puts "  - JIT detection: #{defined?(RubyVM::ZJIT) ? 'ZJIT available' : (defined?(RubyVM::YJIT) ? 'YJIT available' : 'No JIT')}"
+puts "  - JIT detection: #{if defined?(RubyVM::ZJIT)
+'ZJIT available'
+else
+(defined?(RubyVM::YJIT) ? 'YJIT available' : 'No JIT')
+end}"
 puts "  - Ractors execute JIT'd code correctly"
 puts "  - Cross-Ractor messaging works with computed results"
 puts "  - Parallel Ractors with heavy computation work"
@@ -417,17 +421,18 @@ if ENV['INTENSIVE']
     end
 
     def magnitude
-      Math.sqrt(@x * @x + @y * @y + @z * @z)
+      Math.sqrt((@x * @x) + (@y * @y) + (@z * @z))
     end
 
     def normalize
       mag = magnitude
       return Vector.new(0, 0, 0) if mag == 0
+
       scale(1.0 / mag)
     end
 
     def dot(other)
-      @x * other.x + @y * other.y + @z * other.z
+      (@x * other.x) + (@y * other.y) + (@z * other.z)
     end
   end
 
@@ -437,12 +442,12 @@ if ENV['INTENSIVE']
     def initialize(x, y, z, mass)
       @position = Vector.new(x, y, z)
       @velocity = Vector.new(0, 0, 0)
-      @mass = mass
+      @mass     = mass
     end
 
     def apply_force(force)
       acceleration = force.scale(1.0 / @mass)
-      @velocity = @velocity.add(acceleration)
+      @velocity    = @velocity.add(acceleration)
     end
 
     def update(dt)
@@ -469,7 +474,7 @@ if ENV['INTENSIVE']
         dy = p2.position.y - p1.position.y
         dz = p2.position.z - p1.position.z
 
-        dist_sq = dx * dx + dy * dy + dz * dz + 0.01  # Softening
+        dist_sq = (dx * dx) + (dy * dy) + (dz * dz) + 0.01  # Softening
         dist = Math.sqrt(dist_sq)
 
         # Gravitational force magnitude
@@ -498,10 +503,10 @@ if ENV['INTENSIVE']
     srand(42)
     particles = num_particles.times.map do
       Particle.new(
-        rand * 100 - 50,
-        rand * 100 - 50,
-        rand * 100 - 50,
-        rand * 10 + 1
+        (rand * 100) - 50,
+        (rand * 100) - 50,
+        (rand * 100) - 50,
+        (rand * 10) + 1
       )
     end
 
@@ -514,7 +519,7 @@ if ENV['INTENSIVE']
   end
 
   num_particles = 50
-  num_steps = 200
+  num_steps     = 200
 
   puts "Simulation: #{num_particles} particles, #{num_steps} steps"
   puts "This involves ~#{num_particles * (num_particles - 1) / 2 * num_steps} force calculations"

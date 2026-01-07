@@ -22,26 +22,27 @@ FIXTURES = File.expand_path('fixtures/processes', __dir__)
 WATCHDOG_TIMEOUT = (ENV['WATCHDOG_TIMEOUT'] || 300).to_i  # 5 minutes default
 $watchdog = Thread.new do
   sleep WATCHDOG_TIMEOUT
-  $stderr.puts "\n\n" + "=" * 60
-  $stderr.puts "WATCHDOG TIMEOUT (#{WATCHDOG_TIMEOUT}s) - Test suite hung!"
-  $stderr.puts "SEED=#{SEED}"
-  $stderr.puts "=" * 60
+  warn "\n\n" + ("=" * 60)
+  warn "WATCHDOG TIMEOUT (#{WATCHDOG_TIMEOUT}s) - Test suite hung!"
+  warn "SEED=#{SEED}"
+  warn "=" * 60
   Thread.list.each_with_index do |t, i|
     next if t == Thread.current
-    $stderr.puts "\n--- Thread #{i} [#{t.status || 'dead'}] ---"
-    $stderr.puts(t.backtrace&.first(20)&.join("\n") || "(no backtrace)")
+
+    warn "\n--- Thread #{i} [#{t.status || 'dead'}] ---"
+    warn(t.backtrace&.first(20)&.join("\n") || "(no backtrace)")
   end
-  $stderr.puts "=" * 60
+  warn "=" * 60
   exit! 1
 end
 
 # Also handle Ctrl-C gracefully
 Signal.trap("INT") do
-  $stderr.puts "\n\nInterrupted! SEED=#{SEED}"
-  $stderr.puts "Thread dump:"
+  warn "\n\nInterrupted! SEED=#{SEED}"
+  warn "Thread dump:"
   Thread.list.each_with_index do |t, i|
-    $stderr.puts "\n--- Thread #{i} [#{t.status || 'dead'}] ---"
-    $stderr.puts(t.backtrace&.first(15)&.join("\n") || "(no backtrace)")
+    warn "\n--- Thread #{i} [#{t.status || 'dead'}] ---"
+    warn(t.backtrace&.first(15)&.join("\n") || "(no backtrace)")
   end
   exit! 1
 end
@@ -53,7 +54,7 @@ def test(name)
     yield
     puts "OK"
     true
-  rescue => e
+  rescue StandardError => e
     puts "FAIL"
     puts "  #{e.class}: #{e.message}"
     puts "  #{e.backtrace.first(3).join("\n  ")}"
@@ -61,13 +62,9 @@ def test(name)
   end
 end
 
-def assert(condition, msg = "assertion failed")
-  raise msg unless condition
-end
+def assert(condition, msg = "assertion failed") raise msg unless condition end
 
-def assert_equal(expected, actual)
-  raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
-end
+def assert_equal(expected, actual) raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual end
 
 puts "=" * 60
 puts "Umi::Proctor Stress Tests"
@@ -84,16 +81,15 @@ results = []
 puts "--- Spawn Failures ---"
 
 results << test("command not found") do
-  raised = false
   begin
     shellac = Umi::Proctor.new("nonexistent_command_xyz_123")
     # The watcher should still start, but process spawn fails
     # We should get an error when we try to interact
     shellac.join(timeout: 2.0)
-  rescue => e
-    raised = true
+  rescue StandardError
+    true
   end
-  # Note: behavior depends on how popen3 handles missing commands
+  # NOTE: behavior depends on how popen3 handles missing commands
   # This test documents current behavior, whatever it is
   true  # Don't fail - we're exploring behavior
 end
@@ -102,16 +98,20 @@ results << test("permission denied (non-executable)") do
   # Create a file that's not executable
   tmp = "/tmp/shellac_test_noexec_#{$$}"
   File.write(tmp, "#!/bin/bash\necho hi")
-  File.chmod(0644, tmp)  # readable but not executable
+  File.chmod(0o644, tmp)  # readable but not executable
 
   begin
     shellac = Umi::Proctor.new(tmp)
-    result = shellac.join(timeout: 2.0)
+    shellac.join(timeout: 2.0)
     # Should fail with non-zero exit or error
-  rescue => e
+  rescue StandardError
     # Expected
   ensure
-    File.unlink(tmp) rescue nil
+    begin
+      File.unlink(tmp)
+    rescue StandardError
+      nil
+    end
   end
   true
 end
@@ -149,7 +149,7 @@ end
 
 results << test("create new Proctor while previous still cleaning up") do
   # Don't wait for join - just close and move on
-  20.times do |i|
+  20.times do |_i|
     shellac = Umi::Proctor.new("echo", "hi")
     shellac.pop_stdout!(1.0)
     # Don't join - let GC handle it
@@ -179,7 +179,7 @@ results << test("large output (1MB)") do
   end
 
   # Should be ~1MB plus newline
-  assert total > 1_000_000, "expected >1MB, got #{total}"
+  assert_operator total, :>, 1_000_000, "expected >1MB, got #{total}"
 end
 
 results << test("binary data with null bytes") do
@@ -196,7 +196,7 @@ results << test("binary data with null bytes") do
   end
 
   # May not match exactly due to line buffering, but should have data
-  assert output.bytesize > 0, "expected some output"
+  assert_operator output.bytesize, :>, 0, "expected some output"
 end
 
 results << test("no newline in output") do
@@ -207,7 +207,7 @@ results << test("no newline in output") do
     output << chunk
   end
 
-  assert output.include?("no newline"), "expected 'no newline' in output"
+  assert_includes output, "no newline", "expected 'no newline' in output"
 end
 
 results << test("empty output then exit") do
@@ -227,7 +227,11 @@ results << test("output only on stderr") do
     raised = true
   end
 
-  shellac.join(timeout: 1.0) rescue nil
+  begin
+    shellac.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
   assert raised, "expected timeout or process exited"
 end
 
@@ -252,7 +256,7 @@ results << test("rapid stdout/stderr alternation") do
   stdout_count = 0
   stderr_count = 0
 
-  shellac.each_output do |stream, line|
+  shellac.each_output do |stream, _line|
     case stream
     when :stdout then stdout_count += 1
     when :stderr then stderr_count += 1
@@ -295,7 +299,10 @@ results << test("process killed by signal during operation") do
   shellac = Umi::Proctor.new("sleep", "100")
 
   # Kill it externally after a brief delay
-  Thread.new { sleep 0.1; Process.kill("KILL", shellac.pid) }
+  Thread.new do
+    sleep 0.1
+    Process.kill("KILL", shellac.pid)
+  end
 
   result = shellac.join(timeout: 2.0)
   assert result.signaled?
@@ -306,14 +313,17 @@ results << test("stdin write after process dies") do
   sleep 0.1  # Let it die
 
   # Writing should raise or be silently ignored
-  raised = false
   begin
     shellac << "data\n"
   rescue Umi::Proctor::ProcessExited
-    raised = true
+    true
   end
 
-  shellac.join(timeout: 1.0) rescue nil
+  begin
+    shellac.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
   # Either raised or silently handled - both ok for now
   true
 end
@@ -331,14 +341,12 @@ results << test("pop_stdout! after process dies with buffered data") do
   # Should still be able to read buffered output
   lines = []
   3.times do
-    begin
-      lines << shellac.pop_stdout!(1.0)
-    rescue Umi::Proctor::ProcessExited
-      break
-    end
+    lines << shellac.pop_stdout!(1.0)
+  rescue Umi::Proctor::ProcessExited
+    break
   end
 
-  assert lines.size >= 1, "should have received at least 1 line"
+  assert_operator lines.size, :>=, 1, "should have received at least 1 line"
 end
 
 results << test("segfault handling") do
@@ -446,7 +454,7 @@ end
 results << test("abandoned Proctors (no join)") do
   # Create Proctors without joining - they should clean up eventually
   10.times do
-    shellac = Umi::Proctor.new("sleep", "0.1")
+    Umi::Proctor.new("sleep", "0.1")
     # Abandon it
   end
 
@@ -495,7 +503,7 @@ results << test("early return from block") do
   end
 
   # Block returns early, but we get the Result from open()
-  assert value.is_a?(Umi::Proctor::Result)
+  assert_kind_of Umi::Proctor::Result, value
 end
 
 # =============================================================================
@@ -509,20 +517,19 @@ results << test("chaos: random SIGKILL during operation") do
   errors = []
 
   20.times do |i|
-    begin
-      s = Umi::Proctor.new("cat")
-      s << "init#{i}\n"
-      shellacs << s
-    rescue => e
-      errors << "spawn #{i}: #{e.message}"
-    end
+    s = Umi::Proctor.new("cat")
+    s << "init#{i}\n"
+    shellacs << s
+  rescue StandardError => e
+    errors << "spawn #{i}: #{e.message}"
   end
 
   # Chaos thread - randomly kill processes
   chaos = Thread.new do
     sleep 0.05
-    shellacs.each_with_index do |s, i|
+    shellacs.each_with_index do |s, _i|
       next unless s && s.alive? && rand < 0.5  # Kill ~50%
+
       begin
         Process.kill("KILL", s.pid)
       rescue Errno::ESRCH
@@ -535,6 +542,7 @@ results << test("chaos: random SIGKILL during operation") do
   # Meanwhile, try to interact with them
   shellacs.each_with_index do |s, i|
     next unless s
+
     begin
       # Try to receive - may fail if killed
       s.pop_stdout!(0.5)
@@ -542,7 +550,7 @@ results << test("chaos: random SIGKILL during operation") do
       s.pop_stdout!(0.5)
     rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
       # Expected for killed processes
-    rescue => e
+    rescue StandardError => e
       errors << "interact #{i}: #{e.class}: #{e.message}"
     end
   end
@@ -552,19 +560,29 @@ results << test("chaos: random SIGKILL during operation") do
   # Clean up survivors
   shellacs.each do |s|
     next unless s
+
     begin
       s.close_stdin if s.alive?
       s.join(timeout: 1.0)
     rescue Umi::Proctor::Timeout
-      s.kill(:KILL) rescue nil
-      s.join(timeout: 0.5) rescue nil
-    rescue => e
+      begin
+        s.kill(:KILL)
+      rescue StandardError
+        nil
+      end
+      begin
+        s.join(timeout: 0.5)
+      rescue StandardError
+        nil
+      end
+    rescue StandardError
       # Ignore cleanup errors
     end
   end
 
   # Should have no unexpected errors
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -581,7 +599,7 @@ results << test("chaos: rapid stdin writes during death") do
           s << "data#{i}\n"
         rescue Umi::Proctor::ProcessExited
           break
-        rescue => e
+        rescue StandardError => e
           errors << "write #{round}.#{i}: #{e.class}"
           break
         end
@@ -591,7 +609,11 @@ results << test("chaos: rapid stdin writes during death") do
 
     # Kill after random delay
     sleep rand * 0.05
-    s.kill(:KILL) rescue nil
+    begin
+      s.kill(:KILL)
+    rescue StandardError
+      nil
+    end
 
     writer.join(1.0)  # Don't wait forever
 
@@ -599,14 +621,23 @@ results << test("chaos: rapid stdin writes during death") do
       s.join(timeout: 1.0)
     rescue Umi::Proctor::Timeout
       # Force it
-      s.kill(:KILL) rescue nil
-      s.join(timeout: 0.5) rescue nil
-    rescue => e
+      begin
+        s.kill(:KILL)
+      rescue StandardError
+        nil
+      end
+      begin
+        s.join(timeout: 0.5)
+      rescue StandardError
+        nil
+      end
+    rescue StandardError => e
       errors << "join #{round}: #{e.class}"
     end
   end
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -624,7 +655,7 @@ results << test("chaos: overlapping Proctors with random operations") do
           s = Umi::Proctor.new("cat")
           s << "hello\n"
           active << s
-        rescue => e
+        rescue StandardError => e
           errors << "create #{i}: #{e.class}"
         end
       end
@@ -635,7 +666,7 @@ results << test("chaos: overlapping Proctors with random operations") do
           s << "msg#{i}\n"
         rescue Umi::Proctor::ProcessExited
           active.delete(s)
-        rescue => e
+        rescue StandardError => e
           errors << "write #{i}: #{e.class}"
         end
       end
@@ -648,7 +679,7 @@ results << test("chaos: overlapping Proctors with random operations") do
           active.delete(s)
         rescue Umi::Proctor::Timeout
           # Fine
-        rescue => e
+        rescue StandardError => e
           errors << "read #{i}: #{e.class}"
         end
       end
@@ -658,7 +689,7 @@ results << test("chaos: overlapping Proctors with random operations") do
         begin
           s.kill(:KILL)
           s.join(timeout: 0.5)
-        rescue
+        rescue StandardError
           # Ignore
         end
         active.delete(s)
@@ -668,16 +699,23 @@ results << test("chaos: overlapping Proctors with random operations") do
 
   # Cleanup remaining
   active.each do |s|
+    s.close_stdin
+    s.join(timeout: 0.5)
+  rescue StandardError
     begin
-      s.close_stdin
+      s.kill(:KILL)
+    rescue StandardError
+      nil
+    end
+    begin
       s.join(timeout: 0.5)
-    rescue
-      s.kill(:KILL) rescue nil
-      s.join(timeout: 0.5) rescue nil
+    rescue StandardError
+      nil
     end
   end
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -699,12 +737,12 @@ results << test("alternating pop_stdout!/pop_stderr!") do
   shellac = Umi::Proctor.new("ruby", "-e", script)
 
   # Alternate between pop_stdout! and pop_stderr!
-  5.times do |i|
+  5.times do |_i|
     out = shellac.pop_stdout!(2.0)
-    assert out.include?("out"), "expected stdout, got #{out.inspect}"
+    assert_includes out, "out", "expected stdout, got #{out.inspect}"
 
     err = shellac.pop_stderr!(2.0)
-    assert err.include?("err"), "expected stderr, got #{err.inspect}"
+    assert_includes err, "err", "expected stderr, got #{err.inspect}"
   end
 
   shellac.join(timeout: 1.0)
@@ -773,6 +811,7 @@ results << test("stochastic interleaving (20 iterations)") do
     shellac << "test#{i}\n"
     line = shellac.pop_stdout!(2.0)
     raise "expected TEST#{i}, got #{line.inspect}" unless line.chomp == "TEST#{i}"
+
     shellac.close_stdin
     shellac.join(timeout: 2.0)
   end
@@ -797,7 +836,11 @@ results << test("output-then-immediate-exit race") do
       # Also acceptable if we missed the output
     end
 
-    shellac.join(timeout: 1.0) rescue nil
+    begin
+      shellac.join(timeout: 1.0)
+    rescue StandardError
+      nil
+    end
   end
 end
 
@@ -811,18 +854,20 @@ results << test("slow drip with aggressive timeouts") do
 
   received = []
   6.times do
-    begin
-      # Very short timeout - will often miss
-      line = shellac.pop_stdout!(0.05)
-      received << line.chomp.to_i
-    rescue Umi::Proctor::Timeout
-      # Expected
-    rescue Umi::Proctor::ProcessExited
-      break
-    end
+    # Very short timeout - will often miss
+    line = shellac.pop_stdout!(0.05)
+    received << line.chomp.to_i
+  rescue Umi::Proctor::Timeout
+    # Expected
+  rescue Umi::Proctor::ProcessExited
+    break
   end
 
-  shellac.join(timeout: 2.0) rescue nil
+  begin
+    shellac.join(timeout: 2.0)
+  rescue StandardError
+    nil
+  end
   # May have received 0, 1, 2, or 3 - all are valid
   true
 end
@@ -869,21 +914,24 @@ results << test("concurrent readers (same Proctor)") do
   readers = 3.times.map do |r|
     Thread.new do
       5.times do
-        begin
-          shellac.pop_stdout!(0.5)
-        rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
-          # OK
-        rescue => e
-          errors << "reader #{r}: #{e.class}: #{e.message}"
-        end
+        shellac.pop_stdout!(0.5)
+      rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
+        # OK
+      rescue StandardError => e
+        errors << "reader #{r}: #{e.class}: #{e.message}"
       end
     end
   end
 
   readers.each(&:join)
-  shellac.join(timeout: 1.0) rescue nil
+  begin
+    shellac.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -899,7 +947,7 @@ results << test("concurrent writers (same Proctor)") do
           shellac << "writer#{w}-#{i}\n"
         rescue Umi::Proctor::ProcessExited
           # OK if killed
-        rescue => e
+        rescue StandardError => e
           errors << "writer #{w}: #{e.class}: #{e.message}"
         end
         sleep 0.01
@@ -910,7 +958,9 @@ results << test("concurrent writers (same Proctor)") do
   # Drain some output
   Thread.new do
     10.times do
-      shellac.pop_stdout!(0.5) rescue nil
+      shellac.pop_stdout!(0.5)
+    rescue StandardError
+      nil
     end
   end
 
@@ -919,6 +969,7 @@ results << test("concurrent writers (same Proctor)") do
   shellac.join(timeout: 2.0)
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -947,13 +998,17 @@ results << test("partial line at exit (no final newline)") do
 
   # May or may not receive the partial line
   begin
-    line = shellac.pop_stdout!(1.0)
+    shellac.pop_stdout!(1.0)
     # If we got it, great
   rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
     # Also OK
   end
 
-  shellac.join(timeout: 1.0) rescue nil
+  begin
+    shellac.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
   true
 end
 
@@ -986,15 +1041,17 @@ end
 results << test("write after close_stdin") do
   shellac = Umi::Proctor.new("cat")
   shellac.close_stdin
-
-  raised = false
   begin
     shellac << "test\n"
   rescue Umi::Proctor::ProcessExited
-    raised = true
+    true
   end
 
-  shellac.join(timeout: 1.0) rescue nil
+  begin
+    shellac.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
   # Should either raise or silently fail
   true
 end
@@ -1010,7 +1067,7 @@ results << test("operations after join") do
     shellac << "test\n"
   rescue Umi::Proctor::ProcessExited
     # Expected
-  rescue => e
+  rescue StandardError => e
     errors << "write: #{e.class}"
   end
 
@@ -1018,7 +1075,7 @@ results << test("operations after join") do
     shellac.pop_stdout!(0.1)
   rescue Umi::Proctor::ProcessExited
     # Expected
-  rescue => e
+  rescue StandardError => e
     errors << "pop_stdout!: #{e.class}"
   end
 
@@ -1026,11 +1083,12 @@ results << test("operations after join") do
     shellac.kill(:TERM)
   rescue Umi::Proctor::ProcessExited
     # Expected
-  rescue => e
+  rescue StandardError => e
     errors << "kill: #{e.class}"
   end
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -1040,7 +1098,11 @@ results << test("join during active I/O") do
   # Start writing in background
   writer = Thread.new do
     100.times do |i|
-      shellac << "line#{i}\n" rescue nil
+      begin
+        shellac << "line#{i}\n"
+      rescue StandardError
+        nil
+      end
       sleep 0.005
     end
   end
@@ -1067,8 +1129,16 @@ results << test("rapid signal spam") do
 
   # Spam signals
   5.times do
-    shellac.kill(:USR1) rescue nil
-    shellac.kill(:USR2) rescue nil
+    begin
+      shellac.kill(:USR1)
+    rescue StandardError
+      nil
+    end
+    begin
+      shellac.kill(:USR2)
+    rescue StandardError
+      nil
+    end
     sleep 0.01
   end
 
@@ -1103,16 +1173,28 @@ results << test("rapid stdin close/reopen simulation") do
 
     # Random: either read or just kill
     if rand < 0.5
-      s.pop_stdout!(0.5) rescue nil
+      begin
+        s.pop_stdout!(0.5)
+      rescue StandardError
+        nil
+      end
     end
 
     # Random: either close gracefully or kill
     if rand < 0.5
       s.close_stdin
-      s.join(timeout: 0.5) rescue nil
+      begin
+        s.join(timeout: 0.5)
+      rescue StandardError
+        nil
+      end
     else
       s.kill(:KILL)
-      s.join(timeout: 0.5) rescue nil
+      begin
+        s.join(timeout: 0.5)
+      rescue StandardError
+        nil
+      end
     end
   end
 end
@@ -1127,13 +1209,21 @@ results << test("message storm while shutting down") do
     s = Umi::Proctor.new("ruby", "-e", script)
 
     # Let it generate some output
-    3.times { s.pop_stdout!(0.5) rescue nil }
+    3.times do
+      s.pop_stdout!(0.5)
+    rescue StandardError
+      nil
+    end
 
     # Kill while messages are still flying
     s.kill(:KILL)
 
     # Join should not hang
-    s.join(timeout: 2.0) rescue nil
+    begin
+      s.join(timeout: 2.0)
+    rescue StandardError
+      nil
+    end
   end
 end
 
@@ -1148,7 +1238,9 @@ results << test("constructor/destructor race") do
 
   # Some will be GC'd, others we join
   shellacs.each do |s|
-    s.join(timeout: 1.0) rescue nil
+    s.join(timeout: 1.0)
+  rescue StandardError
+    nil
   end
 
   GC.start
@@ -1201,11 +1293,10 @@ results << test("delayed/unflushed stdout") do
   s = Umi::Proctor.new("#{FIXTURES}/delayed-stdout")
 
   # This process doesn't flush, so we might not get output
-  raised = false
   begin
     s.pop_stdout!(0.5)
   rescue Umi::Proctor::Timeout
-    raised = true
+    true
   end
 
   s.kill(:KILL)
@@ -1220,14 +1311,12 @@ results << test("process with child processes") do
   # Collect all output until process exits
   lines = []
   loop do
-    begin
-      lines << s.pop_stdout!(3.0)
-    rescue Umi::Proctor::ProcessExited
-      break
-    rescue Umi::Proctor::Timeout
-      # Still waiting - dump what we have for debugging
-      raise "Timed out waiting for output. Got: #{lines.inspect}"
-    end
+    lines << s.pop_stdout!(3.0)
+  rescue Umi::Proctor::ProcessExited
+    break
+  rescue Umi::Proctor::Timeout
+    # Still waiting - dump what we have for debugging
+    raise "Timed out waiting for output. Got: #{lines.inspect}"
   end
 
   s.join(timeout: 2.0)
@@ -1242,39 +1331,43 @@ results << test("memory hog (allocates rapidly)") do
 
   # Should get "starting"
   line = s.pop_stdout!(5.0)
-  assert line.include?("starting"), "expected 'starting'"
+  assert_includes line, "starting", "expected 'starting'"
 
   # Read some allocation messages
   5.times do
-    begin
-      s.pop_stdout!(2.0)
-    rescue Umi::Proctor::ProcessExited
-      break
-    end
+    s.pop_stdout!(2.0)
+  rescue Umi::Proctor::ProcessExited
+    break
   end
 
   # Kill it (might still be allocating)
-  s.kill(:KILL) rescue nil
-  s.join(timeout: 2.0) rescue nil
+  begin
+    s.kill(:KILL)
+  rescue StandardError
+    nil
+  end
+  begin
+    s.join(timeout: 2.0)
+  rescue StandardError
+    nil
+  end
   true
 end
 
 results << test("randomly crashing process (10 attempts)") do
-  10.times do |i|
+  10.times do |_i|
     s = Umi::Proctor.new("#{FIXTURES}/random-crash")
 
     # Read some ticks until it crashes or we've had enough
     ticks = 0
     loop do
-      begin
-        s.pop_stdout!(1.0)
-        ticks += 1
-        break if ticks >= 10  # Don't wait forever
-      rescue Umi::Proctor::ProcessExited
-        break
-      rescue Umi::Proctor::Timeout
-        break
-      end
+      s.pop_stdout!(1.0)
+      ticks += 1
+      break if ticks >= 10  # Don't wait forever
+    rescue Umi::Proctor::ProcessExited
+      break
+    rescue Umi::Proctor::Timeout
+      break
     end
 
     # Clean up
@@ -1282,7 +1375,11 @@ results << test("randomly crashing process (10 attempts)") do
       s.join(timeout: 0.5)
     rescue Umi::Proctor::Timeout
       s.kill(:KILL)
-      s.join(timeout: 0.5) rescue nil
+      begin
+        s.join(timeout: 0.5)
+      rescue StandardError
+        nil
+      end
     end
   end
 end
@@ -1299,14 +1396,19 @@ results << test("process that exits during our write") do
       s << "data#{i}\n"
     rescue Umi::Proctor::ProcessExited
       # Expected
-    rescue => e
+    rescue StandardError => e
       errors << "#{e.class}: #{e.message}"
     end
     sleep 0.01
   end
 
-  s.join(timeout: 1.0) rescue nil
+  begin
+    s.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -1348,7 +1450,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
 
   # Define scenarios as procs
   scenarios = [
-    -> {
+    lambda {
       # Simple echo
       s = Umi::Proctor.new("cat")
       s << "hello\n"
@@ -1356,7 +1458,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
       s.close_stdin
       s.join(timeout: 1.0)
     },
-    -> {
+    lambda {
       # Stochastic fixture
       s = Umi::Proctor.new("#{FIXTURES}/upcase")
       s << "test\n"
@@ -1364,18 +1466,18 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
       s.close_stdin
       s.join(timeout: 1.0)
     },
-    -> {
+    lambda {
       # Fast exit
       s = Umi::Proctor.new("true")
       s.join(timeout: 1.0)
     },
-    -> {
+    lambda {
       # Killed process
       s = Umi::Proctor.new("sleep", "10")
       s.kill(:KILL)
       s.join(timeout: 1.0)
     },
-    -> {
+    lambda {
       # Timeout scenario
       s = Umi::Proctor.new("#{FIXTURES}/hang")
       begin
@@ -1386,28 +1488,48 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
       s.kill(:KILL)
       s.join(timeout: 1.0)
     },
-    -> {
+    lambda {
       # Counter (multi-shot)
       s = Umi::Proctor.new("#{FIXTURES}/counter")
       s << "x\n"
-      s.pop_stdout!(1.0) rescue nil
+      begin
+        s.pop_stdout!(1.0)
+      rescue StandardError
+        nil
+      end
       s.close_stdin
       s.join(timeout: 2.0)
     },
-    -> {
+    lambda {
       # Infinite stdout (killed)
       s = Umi::Proctor.new("#{FIXTURES}/infinite-stdout")
-      s.pop_stdout!(0.5) rescue nil
+      begin
+        s.pop_stdout!(0.5)
+      rescue StandardError
+        nil
+      end
       s.kill(:KILL)
       s.join(timeout: 1.0)
     },
-    -> {
+    lambda {
       # Random crasher
       s = Umi::Proctor.new("#{FIXTURES}/random-crash")
-      3.times { s.pop_stdout!(0.5) rescue nil }
-      s.kill(:KILL) rescue nil
-      s.join(timeout: 1.0) rescue nil
-    },
+      3.times do
+        s.pop_stdout!(0.5)
+      rescue StandardError
+        nil
+      end
+      begin
+        s.kill(:KILL)
+      rescue StandardError
+        nil
+      end
+      begin
+        s.join(timeout: 1.0)
+      rescue StandardError
+        nil
+      end
+    }
   ]
 
   # Spawn 30 threads, each running a random scenario
@@ -1416,7 +1538,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
       scenario = scenarios.sample
       begin
         scenario.call
-      rescue => e
+      rescue StandardError => e
         errors << "thread#{thread_id}: #{e.class}: #{e.message}"
       end
     end
@@ -1430,6 +1552,7 @@ results << test("simultaneous diverse shellacs (30 concurrent)") do
   errors << "#{hung} threads still running" if hung > 0
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -1466,12 +1589,13 @@ results << test("rapid scenario switching (100 iterations)") do
       end
     rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
       # OK
-    rescue => e
+    rescue StandardError => e
       errors << "iter#{i}: #{e.class}: #{e.message}"
     end
   end
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -1493,7 +1617,7 @@ results << test("concurrent reads and writes across shellacs") do
           s << "msg#{id}-#{j}\n"
         rescue Umi::Proctor::ProcessExited
           break
-        rescue => e
+        rescue StandardError => e
           errors << "writer#{id}: #{e.class}"
           break
         end
@@ -1506,14 +1630,12 @@ results << test("concurrent reads and writes across shellacs") do
   5.times do |i|
     threads << Thread.new(shellacs[i], i) do |s, id|
       10.times do
-        begin
-          s.pop_stdout!(0.5)
-        rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
-          break
-        rescue => e
-          errors << "reader#{id}: #{e.class}"
-          break
-        end
+        s.pop_stdout!(0.5)
+      rescue Umi::Proctor::ProcessExited, Umi::Proctor::Timeout
+        break
+      rescue StandardError => e
+        errors << "reader#{id}: #{e.class}"
+        break
       end
     end
   end
@@ -1522,11 +1644,20 @@ results << test("concurrent reads and writes across shellacs") do
 
   # Cleanup
   shellacs.each do |s|
-    s.close_stdin rescue nil
-    s.join(timeout: 1.0) rescue nil
+    begin
+      s.close_stdin
+    rescue StandardError
+      nil
+    end
+    begin
+      s.join(timeout: 1.0)
+    rescue StandardError
+      nil
+    end
   end
 
   raise errors.join("; ") unless errors.empty?
+
   true
 end
 
@@ -1543,7 +1674,7 @@ results << test("very long line (100KB single line)") do
   s = Umi::Proctor.new("ruby", "-e", script)
   line = s.pop_stdout!(5.0)
 
-  assert line.length > 99_000, "expected 100KB+ line, got #{line.length}"
+  assert_operator line.length, :>, 99_000, "expected 100KB+ line, got #{line.length}"
   s.join(timeout: 1.0)
 end
 
@@ -1561,14 +1692,12 @@ results << test("mixed line endings (CR, LF, CRLF)") do
   lines = []
   3.times do
     case s.pop_stdout(1)
-    in [:ok, line]
-      lines << line.inspect  # Inspect to see control chars
-    in [:closed, _] | nil
-      break
+    in [:ok, line]        then lines << line.inspect  # Inspect to see control chars
+    in [:closed, _] | nil then break
     end
   end
 
-  assert lines.length >= 2, "expected at least 2 lines"
+  assert_operator lines.length, :>=, 2, "expected at least 2 lines"
   s.join(timeout: 1.0)
 end
 
@@ -1586,15 +1715,13 @@ results << test("process exec()s into another process") do
   lines = []
   2.times do
     case s.pop_stdout(2)
-    in [:ok, line]
-      lines << line.chomp
-    in [:closed, _] | nil
-      break
+    in [:ok, line]        then lines << line.chomp
+    in [:closed, _] | nil then break
     end
   end
 
-  assert lines.include?("before_exec"), "missing before_exec"
-  assert lines.include?("after_exec"), "missing after_exec"
+  assert_includes lines, "before_exec", "missing before_exec"
+  assert_includes lines, "after_exec", "missing after_exec"
   s.join(timeout: 1.0)
 end
 
@@ -1604,28 +1731,24 @@ results << test("concurrent pop and write from different threads") do
 
   writer = Thread.new do
     20.times do |i|
-      begin
-        s << "msg#{i}\n"
-        sleep 0.01
-      rescue Umi::Proctor::ProcessExited
-        break
-      rescue => e
-        errors << "writer: #{e.class}: #{e.message}"
-      end
+      s << "msg#{i}\n"
+      sleep 0.01
+    rescue Umi::Proctor::ProcessExited
+      break
+    rescue StandardError => e
+      errors << "writer: #{e.class}: #{e.message}"
     end
   end
 
   reader = Thread.new do
     received = 0
     20.times do
-      begin
-        s.pop_stdout!(1.0)
-        received += 1
-      rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
-        break
-      rescue => e
-        errors << "reader: #{e.class}: #{e.message}"
-      end
+      s.pop_stdout!(1.0)
+      received += 1
+    rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
+      break
+    rescue StandardError => e
+      errors << "reader: #{e.class}: #{e.message}"
     end
     received
   end
@@ -1637,7 +1760,8 @@ results << test("concurrent pop and write from different threads") do
   s.join(timeout: 2.0)
 
   raise errors.join("; ") unless errors.empty?
-  assert received > 0, "should have received some messages"
+
+  assert_operator received, :>, 0, "should have received some messages"
 end
 
 results << test("concurrent pop and kill") do
@@ -1646,11 +1770,9 @@ results << test("concurrent pop and kill") do
 
     # Start a reader that will block
     reader = Thread.new do
-      begin
-        s.pop_stdout!(5.0)
-      rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
-        :expected
-      end
+      s.pop_stdout!(5.0)
+    rescue Umi::Proctor::Timeout, Umi::Proctor::ProcessExited
+      :expected
     end
 
     # Kill while reader is blocking
@@ -1661,7 +1783,11 @@ results << test("concurrent pop and kill") do
     result = reader.join(2)
     raise "reader hung after kill" unless result
 
-    s.join(timeout: 1.0) rescue nil
+    begin
+      s.join(timeout: 1.0)
+    rescue StandardError
+      nil
+    end
   end
 end
 
@@ -1672,16 +1798,12 @@ results << test("rapid pop/peek/output? interleaving") do
   20.times do
     # Randomly choose operation
     case rand(3)
-    when 0
-      ops << [:peek, s.peek&.first]
-    when 1
-      ops << [:output?, s.output?]
+    when 0 then ops << [:peek, s.peek&.first]
+    when 1 then ops << [:output?, s.output?]
     when 2
       case s.pop_stdout(0.05)
-      in [:ok, line]
-        ops << [:pop, line.chomp]
-      in nil
-        ops << [:pop, :timeout]
+      in [:ok, line] then ops << [:pop, line.chomp]
+      in nil         then ops << [:pop, :timeout]
       in [:closed, _]
         ops << [:pop, :closed]
         break
@@ -1690,10 +1812,18 @@ results << test("rapid pop/peek/output? interleaving") do
   end
 
   # Should have gotten a mix of ops
-  assert ops.length > 5, "expected multiple operations"
+  assert_operator ops.length, :>, 5, "expected multiple operations"
 
-  s.kill(:KILL) rescue nil
-  s.join(timeout: 1.0) rescue nil
+  begin
+    s.kill(:KILL)
+  rescue StandardError
+    nil
+  end
+  begin
+    s.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
 end
 
 results << test("stdin backpressure (write faster than process reads)") do
@@ -1711,8 +1841,8 @@ results << test("stdin backpressure (write faster than process reads)") do
   start = Time.now
 
   begin
-    50.times do |i|
-      s << ("x" * 1000 + "\n")  # 1KB per line
+    50.times do |_i|
+      s << (("x" * 1000) + "\n")  # 1KB per line
       written += 1
       break if Time.now - start > 1.0  # Don't spend too long
     end
@@ -1721,9 +1851,13 @@ results << test("stdin backpressure (write faster than process reads)") do
   end
 
   s.kill(:KILL)
-  s.join(timeout: 1.0) rescue nil
+  begin
+    s.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
 
-  assert written > 0, "should have written some data"
+  assert_operator written, :>, 0, "should have written some data"
 end
 
 results << test("SIGSTOP then SIGCONT") do
@@ -1747,8 +1881,7 @@ results << test("SIGSTOP then SIGCONT") do
     # expected - process is stopped
   in [:ok, _]
     # also ok if data was already buffered
-  in [:closed, _]
-    raise "unexpected close"
+  in [:closed, _] then raise "unexpected close"
   end
 
   # Resume the process
@@ -1760,12 +1893,15 @@ results << test("SIGSTOP then SIGCONT") do
     # good
   in [:closed, _]
     # also ok
-  in nil
-    raise "timeout after CONT"
+  in nil then raise "timeout after CONT"
   end
 
   s.kill(:KILL)
-  s.join(timeout: 1.0) rescue nil
+  begin
+    s.join(timeout: 1.0)
+  rescue StandardError
+    nil
+  end
 end
 
 results << test("double join is safe") do
@@ -1774,7 +1910,7 @@ results << test("double join is safe") do
   r1 = s.join(timeout: 1.0)
   r2 = s.join(timeout: 1.0)
 
-  assert r1 == r2, "double join should return same result"
+  assert_equal r1, r2, "double join should return same result"
   assert r1.success?
 end
 
@@ -1832,15 +1968,17 @@ results << test("extremely short-lived process (pop before it starts)") do
 
     # Immediately try operations
     case s.pop_stdout(0.5)
-    in [:closed, result]
-      assert result.success?
+    in [:closed, result] then assert result.success?
     in nil
       # Timeout is also acceptable
-    in [:ok, _]
-      raise "true should not produce output"
+    in [:ok, _] then raise "true should not produce output"
     end
 
-    s.join(timeout: 1.0) rescue nil
+    begin
+      s.join(timeout: 1.0)
+    rescue StandardError
+      nil
+    end
   end
 end
 
@@ -1891,20 +2029,22 @@ results << test("orphaned child process keeps writing") do
   lines = []
   5.times do
     case s.pop_stdout(1)
-    in [:ok, line]
-      lines << line.chomp
-    in [:closed, _] | nil
-      break
+    in [:ok, line]        then lines << line.chomp
+    in [:closed, _] | nil then break
     end
   end
 
   # Should see parent's output
-  assert lines.include?("parent"), "missing parent output: #{lines.inspect}"
+  assert_includes lines, "parent", "missing parent output: #{lines.inspect}"
 
   # Child output may or may not be captured (depends on pipe inheritance)
   # This is actually testing edge behavior
 
-  s.join(timeout: 2.0) rescue s.kill(:KILL)
+  begin
+    s.join(timeout: 2.0)
+  rescue StandardError
+    s.kill(:KILL)
+  end
 end
 
 results << test("Ractor watcher crash recovery") do

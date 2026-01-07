@@ -42,7 +42,7 @@ def test(name)
       puts "[FAIL]"
       $results << [name, :fail]
     end
-  rescue => e
+  rescue StandardError => e
     puts "[ERROR] #{e.class}: #{e.message}"
     $results << [name, :error, e]
   end
@@ -55,7 +55,11 @@ test "Basic signal handler sends to port" do
 
   Signal.trap("USR1") do
     handler_ran = true
-    port << :from_signal rescue nil
+    begin
+      port << :from_signal
+    rescue StandardError
+      nil
+    end
   end
 
   Process.kill("USR1", Process.pid)
@@ -63,7 +67,14 @@ test "Basic signal handler sends to port" do
 
   # Use timer pattern since Ractor.select has no timeout
   timer = Ractor::Port.new
-  Thread.new { sleep 0.1; timer << :timeout rescue nil }
+  Thread.new do
+    sleep 0.1
+    begin
+      timer << :timeout
+    rescue StandardError
+      nil
+    end
+  end
 
   ready, value = Ractor.select(timer, port)
 
@@ -77,7 +88,11 @@ test "Multiple rapid signals don't lose messages" do
 
   Signal.trap("USR1") do
     count += 1
-    port << [:signal, count] rescue nil
+    begin
+      port << [:signal, count]
+    rescue StandardError
+      nil
+    end
   end
 
   10.times { Process.kill("USR1", Process.pid) }
@@ -85,11 +100,19 @@ test "Multiple rapid signals don't lose messages" do
 
   received = []
   timer = Ractor::Port.new
-  Thread.new { sleep 0.2; timer << :done rescue nil }
+  Thread.new do
+    sleep 0.2
+    begin
+      timer << :done
+    rescue StandardError
+      nil
+    end
+  end
 
   loop do
     ready, value = Ractor.select(timer, port)
     break if ready == timer
+
     received << value
   end
 
@@ -105,7 +128,11 @@ test "Signal during blocking I/O deposits message" do
 
   Signal.trap("USR1") do
     handler_ran = true
-    port << :interrupted rescue nil
+    begin
+      port << :interrupted
+    rescue StandardError
+      nil
+    end
   end
 
   # Start a blocking read in another thread
@@ -124,7 +151,14 @@ test "Signal during blocking I/O deposits message" do
   sleep 0.01
 
   timer = Ractor::Port.new
-  Thread.new { sleep 0.1; timer << :timeout rescue nil }
+  Thread.new do
+    sleep 0.1
+    begin
+      timer << :timeout
+    rescue StandardError
+      nil
+    end
+  end
 
   ready, value = Ractor.select(timer, port)
   reader.kill
@@ -143,7 +177,11 @@ test "Signal handler runs even while mutex is held" do
     # Check if mutex is locked (it will be if handler runs during sync block)
     mutex_was_locked = mutex.locked?
     handler_ran_while_locked = true
-    port << :from_handler rescue nil
+    begin
+      port << :from_handler
+    rescue StandardError
+      nil
+    end
   end
 
   # Hold mutex and signal ourselves
@@ -153,14 +191,21 @@ test "Signal handler runs even while mutex is held" do
   end
 
   timer = Ractor::Port.new
-  Thread.new { sleep 0.1; timer << :timeout rescue nil }
+  Thread.new do
+    sleep 0.1
+    begin
+      timer << :timeout
+    rescue StandardError
+      nil
+    end
+  end
 
   ready, _value = Ractor.select(timer, port)
 
   # Handler should have run, and mutex WAS locked when it ran
   # This proves handlers run at "safe points" but NOT "outside locks"
   handler_ran_while_locked && ready == port
-  # Note: mutex_was_locked may or may not be true depending on timing
+  # NOTE: mutex_was_locked may or may not be true depending on timing
 end
 
 # Q5: Signal during Ractor.select
@@ -170,13 +215,24 @@ test "Signal during Ractor.select interrupts and delivers" do
 
   Signal.trap("USR1") do
     handler_ran = true
-    port << :signal_arrived rescue nil
+    begin
+      port << :signal_arrived
+    rescue StandardError
+      nil
+    end
   end
 
   # Start select in another thread, then signal
   selector = Thread.new do
     timer = Ractor::Port.new
-    Thread.new { sleep 1.0; timer << :timeout rescue nil }
+    Thread.new do
+      sleep 1.0
+      begin
+        timer << :timeout
+      rescue StandardError
+        nil
+      end
+    end
     Ractor.select(timer, port)
   end
 
@@ -192,11 +248,14 @@ test "Stress test: 1000 main sends + 1000 signal sends" do
   port = Ractor::Port.new
   signal_count = 0
   main_count = 0
-  errors = []
 
   Signal.trap("USR1") do
     signal_count += 1
-    port << [:signal, signal_count] rescue nil
+    begin
+      port << [:signal, signal_count]
+    rescue StandardError
+      nil
+    end
   end
 
   # Sender thread hammers the port
@@ -225,16 +284,22 @@ test "Stress test: 1000 main sends + 1000 signal sends" do
   received_signal = 0
 
   timer = Ractor::Port.new
-  Thread.new { sleep 0.5; timer << :done rescue nil }
+  Thread.new do
+    sleep 0.5
+    begin
+      timer << :done
+    rescue StandardError
+      nil
+    end
+  end
 
   loop do
     ready, value = Ractor.select(timer, port)
     break if ready == timer
+
     case value
-    in [:main, _]
-      received_main += 1
-    in [:signal, _]
-      received_signal += 1
+    in [:main, _]   then received_main += 1
+    in [:signal, _] then received_signal += 1
     end
   end
 
@@ -253,11 +318,9 @@ test "Port closed during signal handler - rescue prevents crash" do
   error_caught = false
 
   Signal.trap("USR1") do
-    begin
-      port << :message
-    rescue Ractor::ClosedError
-      error_caught = true
-    end
+    port << :message
+  rescue Ractor::ClosedError
+    error_caught = true
   end
 
   # Close the port, then signal

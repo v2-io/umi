@@ -8,21 +8,22 @@ $stderr.sync = true
 @running = true
 
 Signal.trap("TERM") do
-  $stderr.puts "[#{$$}] caught SIGTERM, cleaning up..."
+  warn "[#{$$}] caught SIGTERM, cleaning up..."
   sleep rand * 0.3  # Simulate cleanup
-  $stderr.puts "[#{$$}] cleanup done, exiting"
+  warn "[#{$$}] cleanup done, exiting"
   @running = false
 end
 
 puts "[#{$$}] started, send SIGTERM to stop gracefully"
 
 while @running
-  if IO.select([$stdin], nil, nil, 0.1)
-    line = $stdin.gets
-    break unless line
-    sleep rand * 0.02
-    puts "echo: #{line}"
-  end
+  next unless IO.select([$stdin], nil, nil, 0.1)
+
+  line = $stdin.gets
+  break unless line
+
+  sleep rand * 0.02
+  puts "echo: #{line}"
 end
 
 exit 0

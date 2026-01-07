@@ -52,6 +52,7 @@ begin
     stdout_thread = Thread.new do
       while chunk = stdout.read(4096)
         break if chunk.empty?
+
         stdout_data << chunk
         parent << [:stdout_chunk, chunk.bytesize]
       end
@@ -79,10 +80,8 @@ begin
       in [:stdin, data]
         stdin.write(data)
         stdin.flush
-      in [:close_stdin]
-        stdin.close
-      in [:shutdown]
-        running = false
+      in [:close_stdin] then stdin.close
+      in [:shutdown]    then running = false
       end
     end
 
@@ -123,13 +122,13 @@ begin
   result = watcher.value
 
   # Check results
-  svg = result[:stdout]
+  svg     = result[:stdout]
   success = svg.include?("<svg") && svg.include?("</svg>")
 
   puts "[#{success ? 'OK' : 'FAIL'}] Generated SVG: #{svg.bytesize} bytes"
   puts "  Messages: #{messages.map(&:first).inspect}"
   puts "  SVG preview: #{svg[0..100]}..."
-rescue => e
+rescue StandardError => e
   puts "[FAIL] #{e.class}: #{e.message}"
   puts e.backtrace.first(3).join("\n")
 end
@@ -167,12 +166,9 @@ begin
     while running
       cmd = Ractor.receive
       case cmd
-      in [:stdin, data]
-        stdin.write(data) rescue nil
-      in [:close_stdin]
-        stdin.close rescue nil
-      in [:shutdown]
-        running = false
+      in [:stdin, data] then begin stdin.write(data) rescue StandardError nil end
+      in [:close_stdin] then begin stdin.close rescue StandardError nil end
+      in [:shutdown]    then running = false
       end
     end
 
@@ -200,14 +196,14 @@ begin
   watcher << [:shutdown]
   watcher.value
 
-  exit_code = messages.find { |m| m[0] == :process_died }&.dig(2)
+  exit_code   = messages.find { |m| m[0] == :process_died }&.dig(2)
   stderr_msgs = messages.select { |m| m[0] == :stderr }
 
   puts "[OK] dot rejected bad input"
   puts "  Exit code: #{exit_code}"
   puts "  Stderr messages: #{stderr_msgs.length}"
   stderr_msgs.each { |m| puts "    #{m[1]}" }
-rescue => e
+rescue StandardError => e
   puts "[FAIL] #{e.class}: #{e.message}"
 end
 
@@ -231,6 +227,7 @@ begin
     stdout_thread = Thread.new do
       while chunk = stdout.read(8192)
         break if chunk.empty?
+
         output_chunks << chunk
       end
     end
@@ -244,12 +241,9 @@ begin
     while running
       cmd = Ractor.receive
       case cmd
-      in [:stdin, data]
-        stdin.write(data)
-      in [:close_stdin]
-        stdin.close
-      in [:shutdown]
-        running = false
+      in [:stdin, data] then stdin.write(data)
+      in [:close_stdin] then stdin.close
+      in [:shutdown]    then running = false
       end
     end
 
@@ -290,15 +284,15 @@ begin
   watcher << [:shutdown]
   watcher.value
 
-  result = messages.find { |m| m[0] == :process_died }
-  exit_code = result[2]
+  result      = messages.find { |m| m[0] == :process_died }
+  exit_code   = result[2]
   output_size = result[3]
 
   puts "[#{exit_code == 0 ? 'OK' : 'FAIL'}] Processed #{nodes}-node graph"
   puts "  Input: #{graph_text.bytesize} bytes"
   puts "  Output: #{output_size} bytes"
   puts "  Time: #{(elapsed * 1000).round}ms"
-rescue => e
+rescue StandardError => e
   puts "[FAIL] #{e.class}: #{e.message}"
 end
 
@@ -343,17 +337,9 @@ begin
     while running
       cmd = Ractor.receive
       case cmd
-      in [:stdin, data]
-        begin
-          stdin.write(data)
-          stdin.flush
-        rescue Errno::EPIPE
-          parent << [:stdin_broken]
-        end
-      in [:close_stdin]
-        stdin.close rescue nil
-      in [:shutdown]
-        running = false
+      in [:stdin, data] then begin stdin.write(data) stdin.flush rescue Errno::EPIPE parent << [:stdin_broken] end
+      in [:close_stdin] then begin stdin.close rescue StandardError nil end
+      in [:shutdown]    then running = false
       end
     end
 
@@ -388,8 +374,7 @@ begin
       in [:stdout, line]
         response_lines << line.chomp
         break if line.chomp == "stop"
-      in [:stderr, line]
-        puts "    stderr: #{line}"
+      in [:stderr, line] then puts "    stderr: #{line}"
       in [:process_died, _, code]
         puts "    Process died unexpectedly: #{code}"
         break
@@ -427,7 +412,7 @@ begin
   watcher.value
 
   puts "[OK] Multi-shot conversation completed successfully"
-rescue => e
+rescue StandardError => e
   puts "[FAIL] #{e.class}: #{e.message}"
   puts e.backtrace.first(3).join("\n")
 end

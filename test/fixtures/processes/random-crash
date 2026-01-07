@@ -4,14 +4,11 @@ $stdout.sync = true
 loop do
   puts "tick"
   sleep 0.05
-  if rand < 0.3
-    case rand(3)
-    when 0
-      raise "random error!"
-    when 1
-      exit 42
-    when 2
-      Process.kill("SEGV", $$)
-    end
+  next unless rand < 0.3
+
+  case rand(3)
+  when 0 then raise "random error!"
+  when 1 then exit 42
+  when 2 then Process.kill("SEGV", $$)
   end
 end

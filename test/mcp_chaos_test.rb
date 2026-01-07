@@ -43,6 +43,9 @@ def with_chaos_client(timeout: 5)
   end
 end
 
+# Only run when executed directly, not when required by rake
+if __FILE__ == $0
+
 puts "=" * 60
 puts "MCP Chaos Tests"
 puts "Ruby #{RUBY_VERSION}"
@@ -362,3 +365,5 @@ puts "Results: #{passed} passed, #{failed} failed"
 puts "=" * 60
 
 exit(failed > 0 ? 1 : 0)
+
+end # if __FILE__ == $0

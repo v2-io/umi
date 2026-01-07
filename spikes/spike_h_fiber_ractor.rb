@@ -77,7 +77,7 @@ rescue Ractor::Error, Ractor::RemoteError, TypeError, ArgumentError => e
   puts "  Error: #{e.class}"
   puts "  [EXPECTED] Q2: Fibers cannot be passed between Ractors"
   puts "  (Fibers are Ractor-local, not shareable)"
-rescue => e
+rescue StandardError => e
   puts "  Unexpected error: #{e.class}: #{e.message}"
   puts "  [INFO] Q2: Fiber passing behavior unclear"
 ensure
@@ -113,7 +113,7 @@ end.value
 puts "  Values accumulated: #{result[:values].inspect}"
 puts "  Return values: #{result[:returns].inspect}"
 
-expected_values = ["step 1", "step 2", "step 3"]
+expected_values  = ["step 1", "step 2", "step 3"]
 expected_returns = [:yielded_1, :yielded_2, :done]
 if result[:values] == expected_values && result[:returns] == expected_returns
   puts "  [PASS] Q3: Fiber.yield/resume works correctly inside Ractors"
@@ -183,7 +183,7 @@ result = Ractor.new do
   f = Fiber.new do
     child_fiber_id = Fiber.current.object_id
     {
-      child_is_current: true,  # By definition
+      child_is_current:          true,  # By definition
       child_different_from_main: Fiber.current.object_id != ractor_main_fiber_id
     }
   end
@@ -192,7 +192,7 @@ result = Ractor.new do
 
   {
     main_fiber_class: ractor_main_fiber.class.to_s,
-    from_inside: inner_result,
+    from_inside:      inner_result,
     fibers_different: ractor_main_fiber_id != child_fiber_id
   }
 end.value
@@ -229,16 +229,16 @@ result = Ractor.new do
 
     {
       parent_visible: parent_visible,
-      child_key: Fiber[:child_key]
+      child_key:      Fiber[:child_key]
     }
   end
 
   inner = f.resume
 
   {
-    main_key_after: Fiber[:main_key],
+    main_key_after:            Fiber[:main_key],
     child_key_visible_to_main: Fiber[:child_key],
-    from_child: inner
+    from_child:                inner
   }
 end.value
 
@@ -265,7 +265,8 @@ puts "-" * 40
 result = Ractor.new do
   # Create a custom enumerator (internally uses Fiber)
   fib_enum = Enumerator.new do |y|
-    a, b = 0, 1
+    a = 0
+    b = 1
     loop do
       y.yield a
       a, b = b, a + b
@@ -330,7 +331,7 @@ end.value
 puts "  Results: #{result.inspect}"
 # Order may vary due to threading, but all should be present
 expected_keys = [:main_fiber_1, :thread_fiber_1, :thread_fiber_2, :main_fiber_2]
-actual_keys = result.map(&:first)
+actual_keys   = result.map(&:first)
 if expected_keys.all? { |k| actual_keys.include?(k) }
   puts "  [PASS] Q8: Fibers work in both main thread and spawned threads inside Ractor"
 else
@@ -346,8 +347,6 @@ puts "-" * 40
 
 result = Ractor.new do
   log = []
-
-  f1 = nil
   f2 = nil
 
   f1 = Fiber.new do
@@ -394,8 +393,8 @@ puts "-" * 40
 result = Ractor.new do
   {
     scheduler_class_exists: defined?(Fiber::Scheduler) == "constant",
-    current_scheduler: Fiber.scheduler,
-    can_set_scheduler: Fiber.respond_to?(:set_scheduler)
+    current_scheduler:      Fiber.scheduler,
+    can_set_scheduler:      Fiber.respond_to?(:set_scheduler)
   }
 end.value
 
@@ -431,6 +430,7 @@ result = Ractor.new do
     loop do
       item = producer.transfer
       break if item == :done
+
       consumed << "consumed:#{item}"
     end
     :consumer_finished
@@ -469,8 +469,8 @@ result = Ractor.new(num_fibers) do |n|
   elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
 
   {
-    count: results.size,
-    sum: results.sum,
+    count:   results.size,
+    sum:     results.sum,
     elapsed: elapsed
   }
 end.value
@@ -493,7 +493,7 @@ puts
 puts "Q13: Parallel Ractors each with internal Fibers"
 puts "-" * 40
 
-num_ractors = 4
+num_ractors       = 4
 fibers_per_ractor = 100
 
 start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -502,14 +502,14 @@ ractors = num_ractors.times.map do |rid|
   Ractor.new(rid, fibers_per_ractor) do |ractor_id, num_fibers|
     # Each ractor creates its own fibers
     fibers = num_fibers.times.map do |fid|
-      Fiber.new { [ractor_id, fid, ractor_id * 1000 + fid] }
+      Fiber.new { [ractor_id, fid, (ractor_id * 1000) + fid] }
     end
 
     results = fibers.map(&:resume)
     {
-      ractor_id: ractor_id,
+      ractor_id:   ractor_id,
       fiber_count: results.size,
-      checksum: results.sum { |r| r[2] }
+      checksum:    results.sum { |r| r[2] }
     }
   end
 end

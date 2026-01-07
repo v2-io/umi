@@ -44,7 +44,7 @@ end
 section "TEST 1: Spawn process inside Ractor"
 
 begin
-  r = Ractor.new {
+  r = Ractor.new do
     require 'open3'
     stdin, stdout, stderr, wait_thr = Open3.popen3("cat")
 
@@ -56,11 +56,11 @@ begin
     wait_thr.value
 
     result
-  }
+  end
 
   result = r.value
   report "Spawn process inside Ractor", true, "Got: #{result.inspect}"
-rescue => e
+rescue StandardError => e
   report "Spawn process inside Ractor", false, "#{e.class}: #{e.message}"
 end
 
@@ -72,7 +72,7 @@ section "TEST 2: Ractor owns process, notifies parent"
 begin
   main = Ractor.current
 
-  watcher = Ractor.new(main) do |parent|
+  Ractor.new(main) do |parent|
     require 'open3'
     stdin, stdout, stderr, wait_thr = Open3.popen3("cat")
     pid = wait_thr.pid
@@ -94,7 +94,7 @@ begin
   msg1 = Ractor.receive
   msg2 = Ractor.receive
   report "Ractor owns process lifecycle", true, [msg1, msg2].inspect
-rescue => e
+rescue StandardError => e
   report "Ractor owns process lifecycle", false, "#{e.class}: #{e.message}"
 end
 
@@ -126,8 +126,8 @@ begin
   3.times { results << Ractor.receive }
   final = coordinator.value
 
-  report "Multiple processes from coordinator", true, {results: results, final: final}.inspect
-rescue => e
+  report "Multiple processes from coordinator", true, { results: results, final: final }.inspect
+rescue StandardError => e
   report "Multiple processes from coordinator", false, "#{e.class}: #{e.message}"
 end
 
@@ -190,7 +190,7 @@ begin
   responses << Ractor.receive
 
   report "Command/response pattern", true, responses.inspect
-rescue => e
+rescue StandardError => e
   report "Command/response pattern", false, "#{e.class}: #{e.message}\n#{e.backtrace.first(2).join("\n")}"
 end
 
@@ -230,10 +230,8 @@ begin
       in [:write, data]
         stdin.write(data)
         stdin.flush
-      in [:close_input]
-        stdin.close
-      in [:shutdown]
-        running = false
+      in [:close_input] then stdin.close
+      in [:shutdown]    then running = false
       end
     end
 
@@ -262,7 +260,7 @@ begin
   watcher.value  # Wait for clean shutdown
 
   report "Async with internal threads", true, messages.inspect
-rescue => e
+rescue StandardError => e
   report "Async with internal threads", false, "#{e.class}: #{e.message}\n#{e.backtrace.first(2).join("\n")}"
 end
 
@@ -288,7 +286,7 @@ begin
 
   success = messages[1] == :aborted
   report "Ractor.monitor for crash detection", success, messages.inspect
-rescue => e
+rescue StandardError => e
   report "Ractor.monitor for crash detection", false, "#{e.class}: #{e.message}"
 end
 
@@ -316,7 +314,7 @@ begin
 
   success = messages[2] == :exited
   report "Ractor.monitor for normal exit", success, messages.inspect
-rescue => e
+rescue StandardError => e
   report "Ractor.monitor for normal exit", false, "#{e.class}: #{e.message}"
 end
 
@@ -370,19 +368,10 @@ begin
     while running
       cmd = Ractor.receive
       case cmd
-      in [:stdin, data]
-        begin
-          stdin.write(data)
-          stdin.flush
-        rescue Errno::EPIPE
-          # Process closed its stdin
-        end
-      in [:close_stdin]
-        stdin.close rescue nil
-      in [:kill, signal]
-        Process.kill(signal, pid) rescue nil
-      in [:shutdown]
-        running = false
+      in [:stdin, data]  then begin stdin.write(data) stdin.flush rescue Errno::EPIPE # Process closed its stdin end
+      in [:close_stdin]  then begin stdin.close rescue StandardError nil end
+      in [:kill, signal] then begin Process.kill(signal, pid) rescue StandardError nil end
+      in [:shutdown]     then running = false
       end
     end
 
@@ -419,14 +408,13 @@ begin
   monitor_msg = Ractor.receive
   messages << [:watcher_exited, monitor_msg]
 
-  report "Complete Proctor Pattern", true, {messages: messages, final: final}.inspect
+  report "Complete Proctor Pattern", true, { messages: messages, final: final }.inspect
 
   puts
   puts "=" * 60
   puts "SUCCESS! Full bidirectional process watcher with death notification!"
   puts "=" * 60
-
-rescue => e
+rescue StandardError => e
   report "Complete Proctor Pattern", false, "#{e.class}: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
 end
 

@@ -40,16 +40,23 @@ def test(name)
       puts "[FAIL]"
       $results << [name, :fail]
     end
-  rescue => e
+  rescue StandardError => e
     puts "[ERROR] #{e.class}: #{e.message}"
-    puts e.backtrace.first(3).map { "  #{_1}" }.join("\n")
+    puts e.backtrace.first(3).map { "  #{it}" }.join("\n")
     $results << [name, :error, e]
   end
 end
 
 def receive_with_timeout(port, timeout)
   timer = Ractor::Port.new
-  Thread.new(timer, timeout) { |t, to| sleep to; t << :timeout rescue nil }
+  Thread.new(timer, timeout) do |t, to|
+    sleep to
+    begin
+      t << :timeout
+    rescue StandardError
+      nil
+    end
+  end
   ready, val = Ractor.select(timer, port)
   ready == port ? [:ok, val] : [:timeout]
 end
@@ -65,7 +72,11 @@ test "A1: Main Ractor receives signals directly" do
 
   Signal.trap("USR1") do
     handler_ran = true
-    signal_port << [:signal, :usr1] rescue nil
+    begin
+      signal_port << [:signal, :usr1]
+    rescue StandardError
+      nil
+    end
   end
 
   # Simulate coordinator work
@@ -84,14 +95,26 @@ test "A1: Main Ractor receives signals directly" do
   results = []
   2.times do
     timer = Ractor::Port.new
-    Thread.new(timer) { |t| sleep 0.5; t << :timeout rescue nil }
+    Thread.new(timer) do |t|
+      sleep 0.5
+      begin
+        t << :timeout
+      rescue StandardError
+        nil
+      end
+    end
 
     ready, val = Ractor.select(timer, signal_port, work_port)
     break if ready == timer
+
     results << [ready == signal_port ? :signal : :work, val]
   end
 
-  worker.value rescue nil
+  begin
+    worker.value
+  rescue StandardError
+    nil
+  end
   Signal.trap("USR1", "DEFAULT")
 
   handler_ran &&
@@ -103,9 +126,21 @@ test "A2: Main coordinator handles multiple signal types" do
   signal_port = Ractor::Port.new
   received = []
 
-  Signal.trap("USR1") { signal_port << [:signal, :usr1] rescue nil }
-  Signal.trap("USR2") { signal_port << [:signal, :usr2] rescue nil }
-  Signal.trap("HUP")  { signal_port << [:signal, :hup] rescue nil }
+  Signal.trap("USR1") do
+    signal_port << [:signal, :usr1]
+  rescue StandardError
+    nil
+  end
+  Signal.trap("USR2") do
+    signal_port << [:signal, :usr2]
+  rescue StandardError
+    nil
+  end
+  Signal.trap("HUP") do
+    signal_port << [:signal, :hup]
+  rescue StandardError
+    nil
+  end
 
   Process.kill("USR1", Process.pid)
   Process.kill("USR2", Process.pid)
@@ -116,6 +151,7 @@ test "A2: Main coordinator handles multiple signal types" do
   3.times do
     result = receive_with_timeout(signal_port, 0.2)
     break if result[0] == :timeout
+
     received << result[1]
   end
 
@@ -149,7 +185,14 @@ test "B1: Main receives signal, relays to child coordinator" do
 
     # Wait for message
     timer = Ractor::Port.new
-    Thread.new(timer) { |t| sleep 1.0; t << :timeout rescue nil }
+    Thread.new(timer) do |t|
+      sleep 1.0
+      begin
+        t << :timeout
+      rescue StandardError
+        nil
+      end
+    end
     ready, val = Ractor.select(timer, inbox)
     ready == inbox ? [:received, val] : [:timeout]
   end
@@ -181,7 +224,6 @@ end
 
 test "B2: Relay handles multiple signals before coordinator processes" do
   signal_queue = Thread::Queue.new
-  received_by_coord = []
 
   Signal.trap("USR1") { signal_queue << [:signal, :usr1] }
   Signal.trap("USR2") { signal_queue << [:signal, :usr2] }
@@ -195,9 +237,17 @@ test "B2: Relay handles multiple signals before coordinator processes" do
     messages = []
     4.times do  # Expect 2 signals + shutdown
       timer = Ractor::Port.new
-      Thread.new(timer) { |t| sleep 0.5; t << :timeout rescue nil }
+      Thread.new(timer) do |t|
+        sleep 0.5
+        begin
+          t << :timeout
+        rescue StandardError
+          nil
+        end
+      end
       ready, val = Ractor.select(timer, inbox)
       break if ready == timer || val[0] == :shutdown
+
       messages << val
     end
     messages
@@ -242,7 +292,14 @@ test "C1: Signal handler sends directly to child's port" do
     setup << inbox
 
     timer = Ractor::Port.new
-    Thread.new(timer) { |t| sleep 1.0; t << :timeout rescue nil }
+    Thread.new(timer) do |t|
+      sleep 1.0
+      begin
+        t << :timeout
+      rescue StandardError
+        nil
+      end
+    end
     ready, val = Ractor.select(timer, inbox)
     ready == inbox ? [:received, val] : [:timeout]
   end
@@ -252,7 +309,9 @@ test "C1: Signal handler sends directly to child's port" do
   # Signal handler sends DIRECTLY to coordinator's port
   # (No relay thread needed)
   Signal.trap("USR1") do
-    coord_inbox << [:signal, :usr1] rescue nil
+    coord_inbox << [:signal, :usr1]
+  rescue StandardError
+    nil
   end
 
   Process.kill("USR1", Process.pid)
@@ -274,9 +333,17 @@ test "C2: Direct send under signal stress" do
     messages = []
     50.times do
       timer = Ractor::Port.new
-      Thread.new(timer) { |t| sleep 0.5; t << :timeout rescue nil }
+      Thread.new(timer) do |t|
+        sleep 0.5
+        begin
+          t << :timeout
+        rescue StandardError
+          nil
+        end
+      end
       ready, val = Ractor.select(timer, inbox)
       break if ready == timer
+
       messages << val
     end
     messages.length
@@ -287,7 +354,11 @@ test "C2: Direct send under signal stress" do
 
   Signal.trap("USR1") do
     signal_count += 1
-    coord_inbox << [:signal, signal_count] rescue nil
+    begin
+      coord_inbox << [:signal, signal_count]
+    rescue StandardError
+      nil
+    end
   end
 
   # Rapid fire signals
@@ -316,17 +387,21 @@ test "C3: Child coordinator with work + signals on same select" do
 
     5.times do
       timer = Ractor::Port.new
-      Thread.new(timer) { |t| sleep 0.5; t << :timeout rescue nil }
+      Thread.new(timer) do |t|
+        sleep 0.5
+        begin
+          t << :timeout
+        rescue StandardError
+          nil
+        end
+      end
       ready, val = Ractor.select(timer, inbox)
       break if ready == timer
 
       case val
-      in [:signal, sig]
-        signal_results << sig
-      in [:work, data]
-        work_results << data
-      in [:shutdown]
-        break
+      in [:signal, sig] then signal_results << sig
+      in [:work, data]  then work_results << data
+      in [:shutdown]    then break
       end
     end
 
@@ -335,7 +410,11 @@ test "C3: Child coordinator with work + signals on same select" do
 
   coord_inbox = setup_port.receive
 
-  Signal.trap("USR1") { coord_inbox << [:signal, :usr1] rescue nil }
+  Signal.trap("USR1") do
+    coord_inbox << [:signal, :usr1]
+  rescue StandardError
+    nil
+  end
 
   # Send work
   coord_inbox << [:work, :task1]
@@ -382,18 +461,22 @@ test "D1: Main as thin signal relay (minimal main Ractor)" do
 
     loop do
       timer = Ractor::Port.new
-      Thread.new(timer) { |t| sleep 0.5; t << :timeout rescue nil }
+      Thread.new(timer) do |t|
+        sleep 0.5
+        begin
+          t << :timeout
+        rescue StandardError
+          nil
+        end
+      end
       ready, val = Ractor.select(timer, inbox)
 
       break state if ready == timer
 
       case val
-      in [:signal, sig]
-        state[:signals] << sig
-      in [:work, data]
-        state[:work] << data
-      in [:shutdown]
-        break state
+      in [:signal, sig] then state[:signals] << sig
+      in [:work, data]  then state[:work] << data
+      in [:shutdown]    then break state
       end
     end
   end
@@ -404,7 +487,11 @@ test "D1: Main as thin signal relay (minimal main Ractor)" do
   relay = Thread.new do
     until shutdown
       msg = signal_queue.pop
-      coord_inbox << msg rescue break
+      begin
+        coord_inbox << msg
+      rescue StandardError
+        break
+      end
     end
   end
 

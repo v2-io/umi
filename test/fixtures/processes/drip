@@ -4,7 +4,7 @@
 # Intervals vary: base * (0.5 to 1.5)
 
 count = (ARGV[0] || 5).to_i
-base = (ARGV[1] || 0.3).to_f
+base  = (ARGV[1] || 0.3).to_f
 $stdout.sync = true
 $stderr.sync = true
 
@@ -14,7 +14,7 @@ count.times do |i|
 
   # Occasionally write to stderr instead
   if rand < 0.2
-    $stderr.puts "drip #{i + 1} (stderr)"
+    warn "drip #{i + 1} (stderr)"
   else
     puts "drip #{i + 1}"
   end

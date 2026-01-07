@@ -16,12 +16,12 @@ begin
   port1 = Ractor::Port.new
   port2 = Ractor::Port.new
 
-  r1 = Ractor.new(port1, name: 'r1') do |port|
+  Ractor.new(port1, name: 'r1') do |port|
     sleep 0.1
     port.send(:from_r1)
   end
 
-  r2 = Ractor.new(port2, name: 'r2') do |port|
+  Ractor.new(port2, name: 'r2') do |port|
     sleep 0.2
     port.send(:from_r2)
   end
@@ -38,7 +38,7 @@ begin
 
   puts "\nQ1 FINDING: Ractor.select takes Port objects"
   puts "Q1 FINDING: Returns [port, message] tuple"
-rescue => e
+rescue StandardError => e
   puts "Q1 ERROR: #{e.class}: #{e.message}"
   puts e.backtrace.first(3).join("\n")
 end
@@ -63,11 +63,10 @@ begin
   # so Ractor.select *should* accept Ractor objects
   result = Ractor.select(r_direct)
   puts "  Ractor.select(r_direct) returned: #{result.inspect}"
-
 rescue Ractor::RemoteError => e
   puts "  RemoteError: #{e.message}"
   puts "  Cause: #{e.cause.inspect}" if e.respond_to?(:cause)
-rescue => e
+rescue StandardError => e
   puts "  Error: #{e.class}: #{e.message}"
 end
 
@@ -83,7 +82,7 @@ begin
 
   result = Ractor.select(r_valid)
   puts "  After completion, select returned: #{result.inspect}"
-rescue => e
+rescue StandardError => e
   puts "  Error: #{e.class}: #{e.message}"
 end
 
@@ -101,7 +100,7 @@ begin
 
   result = r_receiver.value
   puts "  r_receiver.value = #{result.inspect}"
-rescue => e
+rescue StandardError => e
   puts "  Error: #{e.class}: #{e.message}"
 end
 
@@ -114,7 +113,7 @@ begin
   # Check method signature
   puts "Ractor.method(:select).parameters: #{Ractor.method(:select).parameters.inspect}"
   puts "  -> Only accepts rest args (ports/ractors), no keyword args for timeout"
-rescue => e
+rescue StandardError => e
   puts "Could not inspect parameters: #{e.message}"
 end
 
@@ -132,9 +131,18 @@ begin
   port_b = Ractor::Port.new
   port_c = Ractor::Port.new
 
-  Ractor.new(port_a, name: 'a') { |p| sleep 0.15; p.send(:from_a) }
-  Ractor.new(port_b, name: 'b') { |p| sleep 0.05; p.send(:from_b) }
-  Ractor.new(port_c, name: 'c') { |p| sleep 0.10; p.send(:from_c) }
+  Ractor.new(port_a, name: 'a') do |p|
+    sleep 0.15
+    p.send(:from_a)
+  end
+  Ractor.new(port_b, name: 'b') do |p|
+    sleep 0.05
+    p.send(:from_b)
+  end
+  Ractor.new(port_c, name: 'c') do |p|
+    sleep 0.10
+    p.send(:from_c)
+  end
 
   puts "\nSelecting on 3 ports (b=0.05s, c=0.10s, a=0.15s)..."
   start = Time.now
@@ -142,12 +150,12 @@ begin
   3.times do |i|
     result = Ractor.select(port_a, port_b, port_c)
     elapsed = Time.now - start
-    source, value = result
+    _, value = result
     puts "  #{i+1}. #{elapsed.round(3)}s: #{value.inspect}"
   end
 
   puts "\nQ3 FINDING: Ractor.select correctly prioritizes by arrival time"
-rescue => e
+rescue StandardError => e
   puts "Q3 ERROR: #{e.class}: #{e.message}"
   puts e.backtrace.first(3).join("\n")
 end
@@ -161,8 +169,14 @@ begin
   p_a = Ractor::Port.new
   p_b = Ractor::Port.new
 
-  Ractor.new(p_a, name: 'A') { |p| sleep 0.05; p.send([:data_from_a, 42]) }
-  Ractor.new(p_b, name: 'B') { |p| sleep 0.1; p.send([:data_from_b, 99]) }
+  Ractor.new(p_a, name: 'A') do |p|
+    sleep 0.05
+    p.send([:data_from_a, 42])
+  end
+  Ractor.new(p_b, name: 'B') do |p|
+    sleep 0.1
+    p.send([:data_from_b, 99])
+  end
 
   result = Ractor.select(p_a, p_b)
   source, value = result
@@ -171,7 +185,7 @@ begin
   puts "  source == p_a ? #{source == p_a}"
   puts "  source.equal?(p_a) ? #{source.equal?(p_a)}"
   puts "\nQ4 FINDING: Returns [port, message], port identity preserved"
-rescue => e
+rescue StandardError => e
   puts "Q4 ERROR: #{e.class}: #{e.message}"
 end
 
@@ -181,7 +195,7 @@ end
 puts "\n--- Q5: Timeout behavior (timer Ractor pattern) ---\n"
 
 begin
-  work_port = Ractor::Port.new
+  work_port  = Ractor::Port.new
   timer_port = Ractor::Port.new
 
   # Timer Ractor sends :timeout after 0.1s
@@ -196,16 +210,16 @@ begin
     port.send(:work_done)
   end
 
-  start = Time.now
-  result = Ractor.select(work_port, timer_port)
+  start   = Time.now
+  result  = Ractor.select(work_port, timer_port)
   elapsed = Time.now - start
 
-  source, value = result
+  _, value = result
   puts "Returned in #{elapsed.round(3)}s"
   puts "Result: #{value.inspect}"
   puts "Timeout? #{value == :timeout}"
   puts "\nQ5 FINDING: No native timeout. Use timer Ractor pattern."
-rescue => e
+rescue StandardError => e
   puts "Q5 ERROR: #{e.class}: #{e.message}"
 end
 
@@ -229,7 +243,10 @@ begin
   # What if one of many is closed?
   puts "\nSelecting on [closed, open] - both options..."
   open = Ractor::Port.new
-  Ractor.new(open) { |p| sleep 0.1; p.send(:from_open) }
+  Ractor.new(open) do |p|
+    sleep 0.1
+    p.send(:from_open)
+  end
 
   begin
     result = Ractor.select(closed, open)
@@ -240,10 +257,13 @@ begin
 
   # What about order - open first?
   puts "\nSelecting on [open, closed]..."
-  open2 = Ractor::Port.new
+  open2   = Ractor::Port.new
   closed2 = Ractor::Port.new
   closed2.close
-  Ractor.new(open2) { |p| sleep 0.1; p.send(:from_open2) }
+  Ractor.new(open2) do |p|
+    sleep 0.1
+    p.send(:from_open2)
+  end
 
   begin
     result = Ractor.select(open2, closed2)
@@ -253,7 +273,7 @@ begin
   end
 
   puts "\nQ5b FINDING: Closed port in select causes immediate ClosedError"
-rescue => e
+rescue StandardError => e
   puts "Q5b ERROR: #{e.class}: #{e.message}"
 end
 
@@ -281,11 +301,10 @@ begin
   result = Ractor.select(monitor_port)
   puts "  Result: #{result.inspect}"
 
-  source, value = result
+  _, value = result
   puts "  Value class: #{value.class}"
   puts "  Value: #{value.inspect}"
-
-rescue => e
+rescue StandardError => e
   puts "Monitor ERROR: #{e.class}: #{e.message}"
   puts e.backtrace.first(3).join("\n")
 end
@@ -307,7 +326,7 @@ begin
   result = Ractor.select(crash_monitor)
   puts "  Result: #{result.inspect}"
 
-  source, value = result
+  _, value = result
   puts "  Notification type: #{value.class}"
   puts "  Notification value: #{value.inspect}"
 
@@ -319,7 +338,7 @@ begin
   elsif value == :exited
     puts "  Normal exit detected"
   end
-rescue => e
+rescue StandardError => e
   puts "Crash monitor ERROR: #{e.class}: #{e.message}"
 end
 
@@ -329,7 +348,7 @@ end
 puts "\n--- Mixing message ports and monitor ports ---\n"
 
 begin
-  msg_port = Ractor::Port.new
+  msg_port     = Ractor::Port.new
   monitor_port = Ractor::Port.new
 
   worker = Ractor.new(msg_port, name: 'mixed_worker') do |port|
@@ -351,7 +370,7 @@ begin
   puts "  Second: #{r2.inspect}"
 
   puts "\nFINDING: Can multiplex messages AND death notifications!"
-rescue => e
+rescue StandardError => e
   puts "Mixed select ERROR: #{e.class}: #{e.message}"
 end
 
@@ -376,11 +395,11 @@ begin
   puts "  Worker replied: #{result[1].inspect}"
 
   puts "\nFINDING: Ractor.recv reads from Ractor's default_port mailbox"
-rescue => e
+rescue StandardError => e
   puts "Ractor.recv ERROR: #{e.class}: #{e.message}"
 end
 
-puts "\n" + "=" * 60
+puts "\n" + ("=" * 60)
 puts "SPIKE B COMPLETE"
 puts "=" * 60
 

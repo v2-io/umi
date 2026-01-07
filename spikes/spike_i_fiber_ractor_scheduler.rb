@@ -33,14 +33,12 @@ puts "-" * 40
 class RactorFiberScheduler
   def initialize
     @waiting_fibers = {}  # port -> fiber
-    @ready_queue = []     # fibers ready to run
-    @results = {}         # fiber -> received value
+    @ready_queue    = []     # fibers ready to run
+    @results        = {}         # fiber -> received value
   end
 
   # Schedule a fiber to run
-  def schedule(fiber)
-    @ready_queue << fiber
-  end
+  def schedule(fiber) = @ready_queue << fiber
 
   # Current fiber wants to wait for a message on a port
   def await_port(port)
@@ -64,7 +62,14 @@ class RactorFiberScheduler
       # Wait on all ports + a timer for periodic wakeup
       ports = @waiting_fibers.keys
       timer_port = Ractor::Port.new
-      Thread.new { sleep 0.1; timer_port << :tick rescue nil }
+      Thread.new do
+        sleep 0.1
+        begin
+          timer_port << :tick
+        rescue StandardError
+          nil
+        end
+      end
 
       ready_port, value = Ractor.select(timer_port, *ports)
 
@@ -147,16 +152,14 @@ puts "-" * 40
 class RactorFiberSchedulerV2
   def initialize
     @waiting = []  # [{fiber:, port:, deadline:}, ...]
-    @ready = []
+    @ready   = []
     @results = {}
   end
 
-  def schedule(fiber)
-    @ready << fiber
-  end
+  def schedule(fiber) = @ready << fiber
 
   def await_port(port, timeout: nil)
-    fiber = Fiber.current
+    fiber    = Fiber.current
     deadline = timeout ? Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout : nil
     @waiting << { fiber: fiber, port: port, deadline: deadline }
     Fiber.yield
@@ -194,7 +197,14 @@ class RactorFiberSchedulerV2
 
       # Use timer port pattern since Ractor.select has no timeout param
       timer_port = Ractor::Port.new
-      Thread.new(wait_time) { |t| sleep t; timer_port << :tick rescue nil }
+      Thread.new(wait_time) do |t|
+        sleep t
+        begin
+          timer_port << :tick
+        rescue StandardError
+          nil
+        end
+      end
 
       ready_port, value = Ractor.select(timer_port, *ports)
 
@@ -375,12 +385,12 @@ workers = 3.times.map do |i|
       break if request == :shutdown
 
       # Simulate work
-      sleep 0.02 + rand * 0.03
+      sleep 0.02 + (rand * 0.03)
 
       # Send response
       request[:reply_to] << {
         worker: id,
-        input: request[:data],
+        input:  request[:data],
         output: request[:data] * 2
       }
     end
@@ -443,11 +453,8 @@ puts "  Fiber::Scheduler is an interface (not a class)"
 puts "  Required methods for a custom scheduler:"
 
 # The interface methods (from Ruby docs)
-scheduler_methods = %i[
-  io_wait io_read io_write io_pread io_pwrite
-  process_wait kernel_sleep block unblock
-  fiber address_resolve timeout_after
-  close
+scheduler_methods = [
+  :io_wait, :io_read, :io_write, :io_pread, :io_pwrite, :process_wait, :kernel_sleep, :block, :unblock, :fiber, :address_resolve, :timeout_after, :close
 ]
 
 puts "    #{scheduler_methods.join(', ')}"
@@ -475,22 +482,18 @@ puts "-" * 40
 class AsyncRactor
   def initialize
     @scheduler = RactorFiberSchedulerV2.new
-    @fibers = []
+    @fibers    = []
   end
 
-  def spawn(&block)
-    fiber = Fiber.new(&block)
+  def spawn(&)
+    fiber = Fiber.new(&)
     @fibers << fiber
     @scheduler.schedule(fiber)
   end
 
-  def await(port, timeout: nil)
-    @scheduler.await_port(port, timeout: timeout)
-  end
+  def await(port, timeout: nil) = @scheduler.await_port(port, timeout: timeout)
 
-  def run
-    @scheduler.run
-  end
+  def run = @scheduler.run
 
   # Helper to create a "future" pattern
   def self.future
@@ -506,19 +509,28 @@ result = Ractor.new do
   # Spawn concurrent tasks
   async.spawn do
     port, resolve = AsyncRactor.future
-    Thread.new { sleep 0.03; resolve.call(:task_a_done) }
+    Thread.new do
+      sleep 0.03
+      resolve.call(:task_a_done)
+    end
     results << [:a, async.await(port, timeout: 1.0)]
   end
 
   async.spawn do
     port, resolve = AsyncRactor.future
-    Thread.new { sleep 0.01; resolve.call(:task_b_done) }
+    Thread.new do
+      sleep 0.01
+      resolve.call(:task_b_done)
+    end
     results << [:b, async.await(port, timeout: 1.0)]
   end
 
   async.spawn do
     port, resolve = AsyncRactor.future
-    Thread.new { sleep 0.02; resolve.call(:task_c_done) }
+    Thread.new do
+      sleep 0.02
+      resolve.call(:task_c_done)
+    end
     results << [:c, async.await(port, timeout: 1.0)]
   end
 

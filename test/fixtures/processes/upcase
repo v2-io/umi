@@ -7,6 +7,6 @@ $stderr.sync = true
 
 while line = $stdin.gets
   sleep rand * 0.03
-  $stderr.puts "[debug] processing: #{line.bytesize} bytes" if rand < 0.3
+  warn "[debug] processing: #{line.bytesize} bytes" if rand < 0.3
   puts line.upcase
 end

@@ -27,7 +27,7 @@ puts
 BOX_ENABLED = defined?(Ruby::Box) && Ruby::Box.enabled?
 
 puts "Ruby Box enabled: #{BOX_ENABLED}"
-if !BOX_ENABLED
+unless BOX_ENABLED
   puts
   puts "WARNING: Ruby Box not enabled!"
   puts "Re-run with: RUBY_BOX=1 ruby #{$0}"
@@ -45,8 +45,8 @@ def test(description, skip_reason: nil, timeout_sec: 5)
   end
 
   begin
-    result = nil
-    thread = Thread.new { result = yield }
+    result  = nil
+    thread  = Thread.new { result = yield }
     success = thread.join(timeout_sec)
     if success
       puts "SUCCESS"
@@ -58,7 +58,7 @@ def test(description, skip_reason: nil, timeout_sec: 5)
       puts "  Test hung for #{timeout_sec}s"
       nil
     end
-  rescue => e
+  rescue StandardError => e
     puts "FAILED"
     puts "  Error: #{e.class}: #{e.message}"
     puts "  #{e.backtrace.first(3).join("\n  ")}" if e.backtrace
@@ -69,7 +69,7 @@ end
 # ============================================================
 # BASELINE: Confirm Ractors still work
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "BASELINE: Ractors still functional with RUBY_BOX=1"
 puts "=" * 70
 
@@ -94,7 +94,7 @@ end
 # ============================================================
 # Q1: Basic Box functionality (if enabled)
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q1: Basic Ruby Box functionality"
 puts "=" * 70
 
@@ -126,7 +126,7 @@ test("Define and access class in box", skip_reason: BOX_ENABLED ? nil : "RUBY_BO
   result = box::Greeter.greet("World")
 
   # Verify it's not in main
-  main_has_greeter = defined?(::Greeter) ? true : false
+  main_has_greeter = defined?(Greeter) ? true : false
 
   "Box result: #{result}, main has Greeter: #{main_has_greeter}"
 end
@@ -160,7 +160,7 @@ end
 # ============================================================
 # Q2: Can a Ractor run code from a specific Box?
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q2: Can a Ractor run code defined in a Box?"
 puts "=" * 70
 
@@ -264,7 +264,7 @@ end
 # ============================================================
 # Q3: What happens when objects cross Box/Ractor boundaries?
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q3: Objects crossing Box/Ractor boundaries"
 puts "=" * 70
 
@@ -284,7 +284,7 @@ test("Box-created object sent via Port", skip_reason: BOX_ENABLED ? nil : "RUBY_
   msg = box::Message.new("hello from box")
 
   port = Ractor::Port.new
-  r = Ractor.new(port) do |p|
+  r = Ractor.new(port) do |_p|
     received = Ractor.receive
     "Ractor received: #{received.class}, content: #{received.content}"
   end
@@ -308,9 +308,7 @@ puts "\n--- Test 3c: Can Ractor see main's monkey patches? ---"
 test("Ractor visibility of main's monkey patches", skip_reason: BOX_ENABLED ? nil : "RUBY_BOX not set") do
   # Add a monkey patch in main
   class String
-    def main_method
-      "from main"
-    end
+    def main_method = "from main"
   end
 
   r = Ractor.new do
@@ -348,7 +346,7 @@ end
 # ============================================================
 # Q4: Protecting coordinator code from application monkey patches
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q4: Coordinator protection from monkey patches"
 puts "=" * 70
 
@@ -391,7 +389,7 @@ test("Coordinator in root, app in box", skip_reason: BOX_ENABLED ? nil : "RUBY_B
     msg = coord_port.receive
     r.value
     "Coordinator received: #{msg} (protected from app's monkey patch)"
-  rescue => e
+  rescue StandardError => e
     "Coordinator broken: #{e.class}"
   end
 end
@@ -425,7 +423,7 @@ end
 # ============================================================
 # Q5: Class definitions across Box/Ractor boundaries
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q5: Class behavior across Box/Ractor boundaries"
 puts "=" * 70
 
@@ -481,7 +479,7 @@ test("Proc from box executed in Ractor", skip_reason: BOX_ENABLED ? nil : "RUBY_
       "Ractor called proc: #{result}"
     end
     r.value
-  rescue => e
+  rescue StandardError => e
     "Error passing proc: #{e.class} - #{e.message}"
   end
 end
@@ -489,7 +487,7 @@ end
 # ============================================================
 # Q6: Application isolation with Box + Ractor
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q6: Full application isolation (Box + Ractor)"
 puts "=" * 70
 
@@ -564,7 +562,7 @@ test("Full isolation: each app in own Box + own Ractor", skip_reason: BOX_ENABLE
 
     result = box::App.process("hello")
     name = box::App.name
-    port.send({app: 1, result: result, name: name})
+    port.send({ app: 1, result: result, name: name })
     "r1 done"
   end
 
@@ -591,7 +589,7 @@ test("Full isolation: each app in own Box + own Ractor", skip_reason: BOX_ENABLE
 
     result = box::App.process("world")
     name = box::App.name
-    port.send({app: 2, result: result, name: name})
+    port.send({ app: 2, result: result, name: name })
     "r2 done"
   end
 
@@ -641,19 +639,17 @@ test("Coordinator orchestrates Box-isolated apps", skip_reason: BOX_ENABLED ? ni
     inbox = Ractor::Port.new
 
     # Register with coordinator
-    coord.send({type: :register, name: :database, inbox: inbox})
+    coord.send({ type: :register, name: :database, inbox: inbox })
 
     # Handle requests
     loop do
       msg = inbox.receive
       case msg
-      in {cmd: :set, key:, value:, reply_to:}
+      in { cmd: :set, key:, value:, reply_to: }
         db.set(key, value)
         reply_to.send(:ok)
-      in {cmd: :get, key:, reply_to:}
-        reply_to.send(db.get(key))
-      in {cmd: :shutdown}
-        break
+      in { cmd: :get, key:, reply_to: } then reply_to.send(db.get(key))
+      in { cmd: :shutdown }             then break
       end
     end
     "db shutdown"
@@ -666,14 +662,14 @@ test("Coordinator orchestrates Box-isolated apps", skip_reason: BOX_ENABLED ? ni
   # Coordinator sends commands to database
   reply_port = Ractor::Port.new
 
-  db_inbox.send({cmd: :set, key: "user", value: "alice", reply_to: reply_port})
+  db_inbox.send({ cmd: :set, key: "user", value: "alice", reply_to: reply_port })
   set_result = reply_port.receive
 
-  db_inbox.send({cmd: :get, key: "user", reply_to: reply_port})
+  db_inbox.send({ cmd: :get, key: "user", reply_to: reply_port })
   get_result = reply_port.receive
 
   # Shutdown
-  db_inbox.send({cmd: :shutdown})
+  db_inbox.send({ cmd: :shutdown })
   db_ractor.value
 
   "Set: #{set_result}, Get: #{get_result}"
@@ -682,7 +678,7 @@ end
 # ============================================================
 # Q7: Edge cases and potential issues
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q7: Edge cases and potential issues"
 puts "=" * 70
 
@@ -726,7 +722,7 @@ test("Is instance of Box class shareable?", skip_reason: BOX_ENABLED ? nil : "RU
   begin
     made_shareable = Ractor.make_shareable(box::MyData.new(99))
     "Instance shareable: #{shareable}, after make_shareable: #{Ractor.shareable?(made_shareable)}"
-  rescue => e
+  rescue StandardError => e
     "Instance shareable: #{shareable}, make_shareable error: #{e.class}"
   end
 end
@@ -738,7 +734,7 @@ test("Can non-main Ractor use class variables in its own Box?", skip_reason: BOX
     begin
       box.eval("class Foo; @@count = 0; end")
       "SUCCESS: class variable set"
-    rescue => e
+    rescue StandardError => e
       "BLOCKED: #{e.class} - #{e.message}"
     end
   end
@@ -752,7 +748,7 @@ test("Can non-main Ractor use class instance variables in its own Box?", skip_re
     begin
       box.eval("class Foo; @count = 0; end")
       "SUCCESS: class instance variable set"
-    rescue => e
+    rescue StandardError => e
       "BLOCKED: #{e.class} - #{e.message}"
     end
   end
@@ -775,7 +771,7 @@ test("Can non-main Ractor use instance variables on instances?", skip_reason: BO
       counter.increment
       counter.increment
       "SUCCESS: counter.value = #{counter.value}"
-    rescue => e
+    rescue StandardError => e
       "BLOCKED: #{e.class} - #{e.message}"
     end
   end
@@ -785,7 +781,7 @@ end
 # ============================================================
 # Q8: Workarounds for Ractor class-level state restrictions
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q8: Workarounds for Ractor class-level state restrictions"
 puts "=" * 70
 
@@ -803,13 +799,9 @@ test("Ractor-local storage as alternative to class variables") do
         Ractor.current[STORAGE_KEY] += 1
       end
 
-      def self.value
-        Ractor.current[STORAGE_KEY] || 0
-      end
+      def self.value = Ractor.current[STORAGE_KEY] || 0
 
-      def self.reset
-        Ractor.current[STORAGE_KEY] = 0
-      end
+      def self.reset = Ractor.current[STORAGE_KEY] = 0
     end
 
     Counter.increment
@@ -833,14 +825,13 @@ test("Each Ractor has its own storage") do
         Ractor.current[KEY] ||= 0
         Ractor.current[KEY] += n
       end
-      def self.value
-        Ractor.current[KEY] || 0
-      end
+
+      def self.value = Ractor.current[KEY] || 0
     end
 
     SharedCounter.add(100)
     SharedCounter.add(100)
-    port.send({ractor: 1, value: SharedCounter.value})
+    port.send({ ractor: 1, value: SharedCounter.value })
   end
 
   r2 = Ractor.new(results_port) do |port|
@@ -850,13 +841,12 @@ test("Each Ractor has its own storage") do
         Ractor.current[KEY] ||= 0
         Ractor.current[KEY] += n
       end
-      def self.value
-        Ractor.current[KEY] || 0
-      end
+
+      def self.value = Ractor.current[KEY] || 0
     end
 
     SharedCounter.add(1)
-    port.send({ractor: 2, value: SharedCounter.value})
+    port.send({ ractor: 2, value: SharedCounter.value })
   end
 
   res1 = results_port.receive
@@ -988,17 +978,16 @@ test("Instance state + Ractor-local registry pattern") do
 
       def self.find(name)
         return nil unless Ractor.current[REGISTRY_KEY]
+
         Ractor.current[REGISTRY_KEY][name]
       end
 
-      def self.all
-        Ractor.current[REGISTRY_KEY]&.values || []
-      end
+      def self.all = Ractor.current[REGISTRY_KEY]&.values || []
     end
 
-    w1 = Worker.new(:worker_1)
-    w2 = Worker.new(:worker_2)
-    w3 = Worker.new(:worker_3)
+    Worker.new(:worker_1)
+    Worker.new(:worker_2)
+    Worker.new(:worker_3)
 
     found = Worker.find(:worker_2)
     all_count = Worker.all.size
@@ -1011,18 +1000,16 @@ end
 # ============================================================
 # Continuing Q7 edge cases
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "Q7 (continued): Edge cases"
 puts "=" * 70
 
 puts "\n--- Test 7h: Box.root modifications ---"
 test("Can we modify root box?", skip_reason: BOX_ENABLED ? nil : "RUBY_BOX not set") do
-  begin
-    Ruby::Box.root.eval("ROOT_CONST = 'from root eval'")
-    "Root eval succeeded, ROOT_CONST defined: #{defined?(ROOT_CONST)}"
-  rescue => e
-    "Root eval error: #{e.class} - #{e.message}"
-  end
+  Ruby::Box.root.eval("ROOT_CONST = 'from root eval'")
+  "Root eval succeeded, ROOT_CONST defined: #{defined?(ROOT_CONST)}"
+rescue StandardError => e
+  "Root eval error: #{e.class} - #{e.message}"
 end
 
 puts "\n--- Test 7i: require in box ---"
@@ -1032,10 +1019,10 @@ test("Box.require of stdlib", skip_reason: BOX_ENABLED ? nil : "RUBY_BOX not set
     box.require('json')
 
     # Can we use JSON in box?
-    result = box::JSON.generate({test: 123})
+    result = box::JSON.generate({ test: 123 })
 
     "Box required json, generated: #{result}"
-  rescue => e
+  rescue StandardError => e
     "Box require error: #{e.class} - #{e.message}"
   end
 end
@@ -1043,207 +1030,207 @@ end
 # ============================================================
 # SUMMARY
 # ============================================================
-puts "\n" + "=" * 70
+puts "\n" + ("=" * 70)
 puts "SPIKE COMPLETE"
 puts "=" * 70
 
 if BOX_ENABLED
   puts <<~SUMMARY
 
-  === SPIKE F FINDINGS ===
+    === SPIKE F FINDINGS ===
 
-  Q1: Can we enable both RUBY_BOX=1 and Ractors?
-      YES! Both work together without fundamental issues.
-      - Ractor.new, Ractor::Port, Ractor.select all function normally
-      - No observed performance issues (though both are experimental)
+    Q1: Can we enable both RUBY_BOX=1 and Ractors?
+        YES! Both work together without fundamental issues.
+        - Ractor.new, Ractor::Port, Ractor.select all function normally
+        - No observed performance issues (though both are experimental)
 
-  Q2: Can a Ractor run code from a specific Box?
-      YES! This is the key finding for Umi.
-      - Can pass Box reference to Ractor (Box is shareable)
-      - Ractor can call methods defined in Box
-      - Box class instances work in Ractor
-      - Box's monkey patches work when called from Ractor
+    Q2: Can a Ractor run code from a specific Box?
+        YES! This is the key finding for Umi.
+        - Can pass Box reference to Ractor (Box is shareable)
+        - Ractor can call methods defined in Box
+        - Box class instances work in Ractor
+        - Box's monkey patches work when called from Ractor
 
-  Q3: What happens when objects cross Box/Ractor boundaries?
-      Objects cross successfully with some nuances:
-      - Objects from Box can be sent to Ractor via Port
-      - Ractor runs in the SAME box as its creator (Box.current is same)
-      - Ractor CAN see main's monkey patches (they share box context)
-      - Ractor can create its own Box inside (full isolation)
-      - Procs CANNOT cross Ractor boundary (TypeError)
+    Q3: What happens when objects cross Box/Ractor boundaries?
+        Objects cross successfully with some nuances:
+        - Objects from Box can be sent to Ractor via Port
+        - Ractor runs in the SAME box as its creator (Box.current is same)
+        - Ractor CAN see main's monkey patches (they share box context)
+        - Ractor can create its own Box inside (full isolation)
+        - Procs CANNOT cross Ractor boundary (TypeError)
 
-  Q4: Can we protect coordinator from monkey patches?
-      YES! This validates the coordinator protection pattern:
-      - App's monkey patch to Ractor::Port didn't affect main
-      - Each Box's patches are isolated to that Box
-      - Coordinator in main box is protected from app boxes
+    Q4: Can we protect coordinator from monkey patches?
+        YES! This validates the coordinator protection pattern:
+        - App's monkey patch to Ractor::Port didn't affect main
+        - Each Box's patches are isolated to that Box
+        - Coordinator in main box is protected from app boxes
 
-  Q5: How do class definitions behave across boundaries?
-      Classes work well, with expected limitations:
-      - Built-in classes (String) are same object across boxes
-      - Subclassing across boundaries works
-      - Procs can't cross Ractor boundary (Ractor limitation)
+    Q5: How do class definitions behave across boundaries?
+        Classes work well, with expected limitations:
+        - Built-in classes (String) are same object across boxes
+        - Subclassing across boundaries works
+        - Procs can't cross Ractor boundary (Ractor limitation)
 
-  Q6: Full application isolation (Box + Ractor)?
-      YES! The pattern works:
-      - Multiple apps with conflicting definitions work in separate boxes
-      - Each app in own Ractor + own Box = full isolation
-      - Coordinator pattern with Box protection works
+    Q6: Full application isolation (Box + Ractor)?
+        YES! The pattern works:
+        - Multiple apps with conflicting definitions work in separate boxes
+        - Each app in own Ractor + own Box = full isolation
+        - Coordinator pattern with Box protection works
 
-      IMPORTANT CONSTRAINTS (Ractor limitations, not Box):
-      - No global variables in non-main Ractor
-      - No class instance variables (@var on Class/Module) in non-main Ractor
-      - Use instance variables on instances instead
+        IMPORTANT CONSTRAINTS (Ractor limitations, not Box):
+        - No global variables in non-main Ractor
+        - No class instance variables (@var on Class/Module) in non-main Ractor
+        - Use instance variables on instances instead
 
-  Q7: Edge cases (shareability, root box, require)?
-      - Box is shareable (can pass between Ractors)
-      - Module/Class from Box is shareable
-      - Instances are NOT shareable by default
-      - Ractor.make_shareable works on Box instances
-      - Box.root.eval works (can modify root)
-      - Box.require works for stdlib (json, etc.)
+    Q7: Edge cases (shareability, root box, require)?
+        - Box is shareable (can pass between Ractors)
+        - Module/Class from Box is shareable
+        - Instances are NOT shareable by default
+        - Ractor.make_shareable works on Box instances
+        - Box.root.eval works (can modify root)
+        - Box.require works for stdlib (json, etc.)
 
-      CRITICAL - Box does NOT bypass Ractor restrictions:
-      - Class variables (@@var): BLOCKED even in own Box
-      - Class instance variables (@var on Class): BLOCKED even in own Box
-      - Instance variables on instances (@var): WORKS
+        CRITICAL - Box does NOT bypass Ractor restrictions:
+        - Class variables (@@var): BLOCKED even in own Box
+        - Class instance variables (@var on Class): BLOCKED even in own Box
+        - Instance variables on instances (@var): WORKS
 
-  Q8: Workarounds for Ractor class-level state restrictions?
-      Three patterns work in non-main Ractors:
+    Q8: Workarounds for Ractor class-level state restrictions?
+        Three patterns work in non-main Ractors:
 
-      1. INSTANCE VARIABLES ON INSTANCES (simplest)
-         Instead of class-level state, create instances and use their @vars.
+        1. INSTANCE VARIABLES ON INSTANCES (simplest)
+           Instead of class-level state, create instances and use their @vars.
 
-         ```ruby
-         # Instead of:
-         class Counter
-           @@count = 0                    # BLOCKED
-           def self.increment = @@count += 1
-         end
-
-         # Use:
-         class Counter
-           def initialize = @count = 0   # WORKS
-           def increment = @count += 1
-         end
-         counter = Counter.new
-         ```
-
-      2. RACTOR-LOCAL STORAGE (Ractor.current[key])
-         Per-Ractor hash storage. Each Ractor has its own isolated copy.
-
-         ```ruby
-         class Counter
-           KEY = :counter_value
-
-           def self.increment
-             Ractor.current[KEY] ||= 0
-             Ractor.current[KEY] += 1
+           ```ruby
+           # Instead of:
+           class Counter
+             @@count = 0                    # BLOCKED
+             def self.increment = @@count += 1
            end
 
-           def self.value
-             Ractor.current[KEY] || 0
+           # Use:
+           class Counter
+             def initialize = @count = 0   # WORKS
+             def increment = @count += 1
            end
-         end
-         ```
+           counter = Counter.new
+           ```
 
-         Benefits:
-         - Works like class variables but Ractor-safe
-         - Each Ractor gets isolated state automatically
-         - Can store any object (even unshareable)
+        2. RACTOR-LOCAL STORAGE (Ractor.current[key])
+           Per-Ractor hash storage. Each Ractor has its own isolated copy.
 
-      3. RACTOR-LOCAL SINGLETON (RactorLocalSingleton)
-         Ruby's built-in Ractor-compatible Singleton replacement.
+           ```ruby
+           class Counter
+             KEY = :counter_value
 
-         ```ruby
-         require 'singleton'
+             def self.increment
+               Ractor.current[KEY] ||= 0
+               Ractor.current[KEY] += 1
+             end
 
-         class AppConfig
-           include RactorLocalSingleton  # NOT Singleton!
-           attr_accessor :debug
-         end
-
-         config = AppConfig.instance  # Per-Ractor instance
-         ```
-
-         Note: Regular `Singleton` module FAILS in non-main Ractors.
-         Use `RactorLocalSingleton` instead.
-
-      4. COMBINED PATTERN: Instance state + Ractor-local registry
-         Use instances for state, Ractor-local storage for lookups.
-
-         ```ruby
-         class Worker
-           REGISTRY_KEY = :worker_registry
-           attr_reader :name
-
-           def initialize(name)
-             @name = name
-             self.class.register(self)
+             def self.value
+               Ractor.current[KEY] || 0
+             end
            end
+           ```
 
-           def self.register(worker)
-             Ractor.current[REGISTRY_KEY] ||= {}
-             Ractor.current[REGISTRY_KEY][worker.name] = worker
+           Benefits:
+           - Works like class variables but Ractor-safe
+           - Each Ractor gets isolated state automatically
+           - Can store any object (even unshareable)
+
+        3. RACTOR-LOCAL SINGLETON (RactorLocalSingleton)
+           Ruby's built-in Ractor-compatible Singleton replacement.
+
+           ```ruby
+           require 'singleton'
+
+           class AppConfig
+             include RactorLocalSingleton  # NOT Singleton!
+             attr_accessor :debug
            end
 
-           def self.find(name)
-             Ractor.current[REGISTRY_KEY]&.[](name)
+           config = AppConfig.instance  # Per-Ractor instance
+           ```
+
+           Note: Regular `Singleton` module FAILS in non-main Ractors.
+           Use `RactorLocalSingleton` instead.
+
+        4. COMBINED PATTERN: Instance state + Ractor-local registry
+           Use instances for state, Ractor-local storage for lookups.
+
+           ```ruby
+           class Worker
+             REGISTRY_KEY = :worker_registry
+             attr_reader :name
+
+             def initialize(name)
+               @name = name
+               self.class.register(self)
+             end
+
+             def self.register(worker)
+               Ractor.current[REGISTRY_KEY] ||= {}
+               Ractor.current[REGISTRY_KEY][worker.name] = worker
+             end
+
+             def self.find(name)
+               Ractor.current[REGISTRY_KEY]&.[](name)
+             end
            end
-         end
-         ```
+           ```
 
-  === IMPLICATIONS FOR UMI ===
+    === IMPLICATIONS FOR UMI ===
 
-  1. BOX + RACTOR PROVIDE COMPLEMENTARY ISOLATION:
-     - Ractor: Memory isolation (share-nothing concurrency)
-     - Box: Namespace isolation (monkey-patch containment)
-     Together: Apps can't interfere with each other's memory OR definitions
+    1. BOX + RACTOR PROVIDE COMPLEMENTARY ISOLATION:
+       - Ractor: Memory isolation (share-nothing concurrency)
+       - Box: Namespace isolation (monkey-patch containment)
+       Together: Apps can't interfere with each other's memory OR definitions
 
-  2. COORDINATOR PROTECTION PATTERN:
-     - Coordinator runs in main box (protected)
-     - Each app creates its own Box INSIDE its Ractor
-     - App's monkey patches can't affect coordinator's primitives
+    2. COORDINATOR PROTECTION PATTERN:
+       - Coordinator runs in main box (protected)
+       - Each app creates its own Box INSIDE its Ractor
+       - App's monkey patches can't affect coordinator's primitives
 
-  3. RACTOR INHERITS BOX CONTEXT:
-     - Ractor runs in same box as creator by default
-     - For true isolation, create Box inside Ractor
-     - This is actually useful: can share coordinator's box context
+    3. RACTOR INHERITS BOX CONTEXT:
+       - Ractor runs in same box as creator by default
+       - For true isolation, create Box inside Ractor
+       - This is actually useful: can share coordinator's box context
 
-  4. RACTOR LIMITATIONS STILL APPLY:
-     - No global variables in non-main Ractors
-     - No class/module instance variables in non-main Ractors
-     - Procs can't cross Ractor boundaries
-     - These are Ractor constraints, not Box constraints
+    4. RACTOR LIMITATIONS STILL APPLY:
+       - No global variables in non-main Ractors
+       - No class/module instance variables in non-main Ractors
+       - Procs can't cross Ractor boundaries
+       - These are Ractor constraints, not Box constraints
 
-  5. RECOMMENDED PATTERN FOR UMI:
-     ```ruby
-     # Coordinator (in main Ractor, main Box)
-     app_ractor = Ractor.new(coordinator_port) do |coord|
-       # Create isolated box for this app
-       app_box = Ruby::Box.new
-       app_box.require('my_app')
+    5. RECOMMENDED PATTERN FOR UMI:
+       ```ruby
+       # Coordinator (in main Ractor, main Box)
+       app_ractor = Ractor.new(coordinator_port) do |coord|
+         # Create isolated box for this app
+         app_box = Ruby::Box.new
+         app_box.require('my_app')
 
-       # App's monkey patches stay in app_box
-       # Coordinator's code is protected
+         # App's monkey patches stay in app_box
+         # Coordinator's code is protected
 
-       supervisor = app_box::MyApp::Supervisor.new
-       supervisor.run(coord)
-     end
-     ```
+         supervisor = app_box::MyApp::Supervisor.new
+         supervisor.run(coord)
+       end
+       ```
 
   SUMMARY
 
 else
   puts <<~SUMMARY
 
-  === SPIKE F: NOT RUN ===
+    === SPIKE F: NOT RUN ===
 
-  Ruby Box was not enabled. To run this spike:
+    Ruby Box was not enabled. To run this spike:
 
-    RUBY_BOX=1 ruby spikes/spike_f_box_ractor.rb
+      RUBY_BOX=1 ruby spikes/spike_f_box_ractor.rb
 
-  Without Box enabled, only baseline Ractor tests were run.
+    Without Box enabled, only baseline Ractor tests were run.
 
   SUMMARY
 end

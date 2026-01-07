@@ -4,7 +4,7 @@
 # Default: 1000 lines of 100 chars each
 
 count = (ARGV[0] || 1000).to_i
-size = (ARGV[1] || 100).to_i
+size  = (ARGV[1] || 100).to_i
 $stdout.sync = true
 
 chars = ('a'..'z').to_a + ('0'..'9').to_a
@@ -19,4 +19,4 @@ count.times do |i|
   puts "#{i.to_s.rjust(6, '0')}: #{line}"
 end
 
-$stderr.puts "firehose complete: #{count} lines, ~#{count * (size + 10)} bytes"
+warn "firehose complete: #{count} lines, ~#{count * (size + 10)} bytes"

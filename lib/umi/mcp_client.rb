@@ -20,8 +20,10 @@ module Umi
   class MCPClient
     class ProtocolError < StandardError; end
     class TimeoutError < StandardError; end
+
     class ServerError < StandardError
       attr_reader :code, :data
+
       def initialize(message, code: nil, data: nil)
         super(message)
         @code = code
@@ -34,7 +36,7 @@ module Umi
 
     # Client capabilities we advertise
     CLIENT_CAPABILITIES = {
-      roots: { listChanged: true },
+      roots:    { listChanged: true },
       sampling: {}
     }.freeze
 
@@ -46,14 +48,14 @@ module Umi
     # @param args [Array<String>] Arguments to the command
     # @param timeout [Numeric] Default timeout for requests (seconds)
     def initialize(cmd, *args, timeout: 30)
-      @cmd = cmd
-      @args = args
-      @default_timeout = timeout
-      @proctor = nil
-      @request_id = 0
-      @server_info = nil
+      @cmd                 = cmd
+      @args                = args
+      @default_timeout     = timeout
+      @proctor             = nil
+      @request_id          = 0
+      @server_info         = nil
       @server_capabilities = nil
-      @started = false
+      @started             = false
     end
 
     # Start the MCP server and perform initialization handshake.
@@ -67,15 +69,15 @@ module Umi
 
       # MCP initialization handshake
       response = call("initialize", {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: CLIENT_CAPABILITIES,
-        clientInfo: {
-          name: "umi-mcp-client",
-          version: "0.1.0"
-        }
-      })
+                        protocolVersion: PROTOCOL_VERSION,
+                        capabilities:    CLIENT_CAPABILITIES,
+                        clientInfo:      {
+                          name:    "umi-mcp-client",
+                          version: "0.1.0"
+                        }
+                      })
 
-      @server_info = response["serverInfo"]
+      @server_info         = response["serverInfo"]
       @server_capabilities = response["capabilities"]
 
       # Send initialized notification
@@ -96,13 +98,13 @@ module Umi
       raise "Not started" unless @started
 
       timeout ||= @default_timeout
-      id = next_id
+      id      = next_id
 
       request = {
         jsonrpc: "2.0",
-        id: id,
-        method: method,
-        params: params
+        id:      id,
+        method:  method,
+        params:  params
       }
 
       send_message(request)
@@ -118,7 +120,7 @@ module Umi
 
       notification = {
         jsonrpc: "2.0",
-        method: method
+        method:  method
       }
       notification[:params] = params if params
 
@@ -173,16 +175,12 @@ module Umi
     # @param name [String] Prompt name
     # @param arguments [Hash] Prompt arguments
     # @return [Object] Prompt content
-    def get_prompt(name, arguments = {})
-      call("prompts/get", name: name, arguments: arguments)
-    end
+    def get_prompt(name, arguments = {}) = call("prompts/get", name: name, arguments: arguments)
 
     # Check if the server is alive.
     #
     # @return [Boolean]
-    def alive?
-      @proctor&.alive? || false
-    end
+    def alive? = @proctor&.alive? || false
 
     # Close the MCP connection.
     #
@@ -203,10 +201,8 @@ module Umi
       lines = []
       loop do
         case @proctor.pop_stderr(0)
-        in [:ok, line]
-          lines << line
-        in nil | [:closed, _]
-          break
+        in [:ok, line]        then lines << line
+        in nil | [:closed, _] then break
         end
       end
       lines
@@ -214,9 +210,7 @@ module Umi
 
     private
 
-    def next_id
-      @request_id += 1
-    end
+    def next_id = @request_id += 1
 
     def send_message(msg)
       json = JSON.dump(msg)
@@ -253,8 +247,7 @@ module Umi
           # Not our response - could be out-of-order (shouldn't happen in MCP)
           # For now, just continue waiting
 
-        in nil
-          raise TimeoutError, "Request timed out after #{timeout}s"
+        in nil then raise TimeoutError, "Request timed out after #{timeout}s"
 
         in [:closed, result]
           status = result.success? ? "cleanly" : "with code #{result.exit_code}"

@@ -14,12 +14,12 @@ count.times do |i|
   if rand < 0.5
     puts "stdout: #{msg}"
   else
-    $stderr.puts "stderr: #{msg}"
+    warn "stderr: #{msg}"
   end
 
   # Sometimes emit both
   if rand < 0.2
     puts "stdout: #{msg} (bonus)"
-    $stderr.puts "stderr: #{msg} (bonus)"
+    warn "stderr: #{msg} (bonus)"
   end
 end

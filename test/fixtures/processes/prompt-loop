@@ -23,17 +23,15 @@ loop do
   when "quit", "exit"
     puts "goodbye!"
     break
-  when "error"
-    $stderr.puts "ERROR: simulated error"
+  when "error" then warn "ERROR: simulated error"
   when "slow"
-    sleep 0.5 + rand * 0.5
+    sleep 0.5 + (rand * 0.5)
     puts "...that was slow"
-  when "crash"
-    raise "user requested crash"
+  when "crash" then raise "user requested crash"
   when /^wait (\d+)/
-    secs = $1.to_f / 1000.0
+    secs = Regexp.last_match(1).to_f / 1000.0
     sleep secs
-    puts "waited #{$1}ms"
+    puts "waited #{Regexp.last_match(1)}ms"
   else
     puts "you said: #{line}"
   end

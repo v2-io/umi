@@ -3,22 +3,22 @@
 # Usage: crasher [max_lines]
 # Processes 0 to max_lines inputs then crashes
 
-max_lines = (ARGV[0] || 3).to_i
+max_lines   = (ARGV[0] || 3).to_i
 crash_after = rand(0..max_lines)
 $stdout.sync = true
 $stderr.sync = true
 
-count = 0
+count      = 0
 while line = $stdin.gets
   count += 1
   sleep rand * 0.02
   puts "processed: #{line}"
 
-  if count >= crash_after
-    $stderr.puts "FATAL: something went wrong!"
-    sleep rand * 0.05
-    raise "Simulated crash after #{count} lines"
-  end
+  next unless count >= crash_after
+
+  warn "FATAL: something went wrong!"
+  sleep rand * 0.05
+  raise "Simulated crash after #{count} lines"
 end
 
 # If stdin closes before crash point

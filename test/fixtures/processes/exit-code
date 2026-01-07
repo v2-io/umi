@@ -3,7 +3,7 @@
 # Usage: exit-code [code]
 # If no code given, picks random 1-10
 
-code = ARGV[0]&.to_i || rand(1..10)
+code  = ARGV[0]&.to_i || rand(1..10)
 delay = rand * 0.2
 
 $stdout.sync = true
