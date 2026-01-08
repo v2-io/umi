@@ -3,16 +3,12 @@
 require 'timeout'
 
 module Umi
-  # Worker provides a supervised process abstraction with call/cast messaging.
+  # Worker provides a supervised process abstraction that feels like a normal Ruby object.
   #
-  # A Worker wraps a Ractor that runs a message loop. It supports:
-  # - Call: synchronous request/response (blocks until reply)
-  # - Cast: asynchronous fire-and-forget (returns immediately)
-  # - Shutdown: graceful termination with cleanup callback
+  # A Worker runs in its own Ractor. You interact with it through a proxy that
+  # forwards method calls transparently via `method_missing`.
   #
   # ## Usage
-  #
-  # Subclass Worker and implement the callbacks:
   #
   # ```ruby
   # class Counter < Umi::Worker
@@ -20,79 +16,56 @@ module Umi
   #     @count = args[:start] || 0
   #   end
   #
-  #   def handle_call(request)
-  #     case request
-  #     in [:get] then @count
-  #     in [:add, n] then @count += n
-  #     end
-  #   end
-  #
-  #   def handle_cast(message)
-  #     case message
-  #     in [:increment] then @count += 1
-  #     end
-  #   end
-  #
-  #   def terminate(reason)
-  #     puts "Counter shutting down: #{reason}"
-  #   end
+  #   def get = @count
+  #   def add(n) = @count += n
+  #   def increment = @count += 1
   # end
   #
-  # handle = Counter.start_link(start: 10)
-  # handle.call([:get])  # => 10
-  # handle.cast([:increment])
-  # handle.call([:get])  # => 11
-  # handle.shutdown
+  # counter = Counter.new(start: 10)
+  # counter.get        # => 10
+  # counter.increment
+  # counter.get        # => 11
+  # counter.add(5)     # => 16
+  # counter.shutdown
   # ```
   #
+  # The proxy forwards all method calls to the worker Ractor. From the caller's
+  # perspective, it's just a Counter object.
+  #
   class Worker
-    # Start a new worker Ractor.
+    # Create a new worker running in its own Ractor.
     #
     # @param args [Hash] Arguments passed to init
-    # @return [WorkerHandle] Handle for communicating with the worker
-    def self.start_link(args = {})
+    # @return [WorkerProxy] A proxy that behaves like the worker
+    def self.new(args = {})
       setup_port   = Ractor::Port.new
       worker_class = self
 
       ractor = Ractor.new(setup_port, worker_class, args) do |setup, klass, init_args|
-        # Create command port inside Ractor so we can receive from it
         command_port = Ractor::Port.new
         setup << command_port
 
-        # Instantiate worker and initialize
+        # Create the actual worker instance inside the Ractor
         worker = klass.allocate
         worker.instance_variable_set(:@_command_port, command_port)
-        worker.send(:init, init_args)
+        worker.send(:_init_worker, init_args)
 
         # Run message loop
-        worker.send(:run_loop)
+        worker.send(:_run_loop)
       end
 
       command_port = setup_port.receive
-      WorkerHandle.new(ractor, command_port)
+      WorkerProxy.new(ractor, command_port)
     end
 
     # Initialize the worker state. Override in subclass.
     #
-    # @param args [Hash] Arguments from start_link
+    # @param args [Hash] Arguments from new
     def init(args)
       # Default: no initialization needed
     end
 
-    # Handle a synchronous call. Override in subclass.
-    #
-    # @param request [Object] The request from the caller
-    # @return [Object] Response to send back
-    def handle_call(request) = raise NotImplementedError, "#{self.class} must implement handle_call"
-
-    # Handle an asynchronous cast. Override in subclass.
-    #
-    # @param message [Object] The message (no response expected)
-    def handle_cast(message)
-      # Default: ignore casts
-    end
-
-    # Clean up before termination. Override in subclass.
+    # Called before termination. Override in subclass.
     #
     # @param reason [Symbol, Exception] Why we're terminating
     def terminate(reason)
@@ -101,20 +74,22 @@ module Umi
 
     private
 
-    def run_loop
+    def _init_worker(args)
+      init(args)
+    end
+
+    def _run_loop
       loop do
         msg = @_command_port.receive
 
         case msg
-        in [:call, request, reply_port]
+        in [:call, method, args, kwargs, reply_port]
           begin
-            response = handle_call(request)
-            reply_port << [:ok, response]
+            result = public_send(method, *args, **kwargs)
+            reply_port << [:ok, result]
           rescue StandardError => e
             reply_port << [:error, e.class.name, e.message]
           end
-
-        in [:cast, message] then handle_cast(message)
 
         in [:shutdown, timeout]
           terminate(:shutdown)
@@ -122,54 +97,46 @@ module Umi
         end
       rescue StandardError => e
         terminate(e)
-        raise  # Re-raise so supervisor sees the crash
+        raise
       end
     end
   end
 
-  # Handle for communicating with a Worker.
+  # Proxy that makes a Worker feel like a normal Ruby object.
   #
-  # Provides a clean API that hides the message protocol.
+  # All method calls are forwarded to the worker Ractor transparently.
   #
-  class WorkerHandle
-    # Timeout for call operations (seconds)
+  class WorkerProxy
     DEFAULT_TIMEOUT = 5.0
 
     def initialize(ractor, command_port)
       @ractor       = ractor
       @command_port = command_port
-      @terminated   = false
     end
 
-    # Synchronous request/response.
-    #
-    # @param request [Object] The request to send
-    # @param timeout [Numeric] Seconds to wait for response
-    # @return [Object] The response from the worker
-    # @raise [Timeout::Error] If no response within timeout
-    # @raise [WorkerError] If worker returned an error
-    def call(request, timeout: DEFAULT_TIMEOUT)
+    # Forward method calls to the worker.
+    def method_missing(method, *args, **kwargs, &block)
+      raise ArgumentError, "Worker methods cannot take blocks" if block
+
       reply_port = Ractor::Port.new
-      @command_port << [:call, request, reply_port]
+      @command_port << [:call, method, args, kwargs, reply_port]
 
       # Wait for reply with timeout
       timer_port = Ractor::Port.new
-      timer      = Thread.new do
-        sleep(timeout)
-        begin
-          timer_port << :timeout
-        rescue StandardError
-          nil
-        end
+      timer = Thread.new do
+        sleep(DEFAULT_TIMEOUT)
+        timer_port << :timeout rescue nil
       end
 
       begin
         ready, value = Ractor.select(reply_port, timer_port)
 
-        raise Timeout::Error, "Worker call timed out after #{timeout}s" if ready == timer_port
+        if ready == timer_port
+          raise Timeout::Error, "Worker call timed out after #{DEFAULT_TIMEOUT}s"
+        end
 
         case value
-        in [:ok, response]                then response
+        in [:ok, result]                  then result
         in [:error, error_class, message] then raise WorkerError, "#{error_class}: #{message}"
         end
       ensure
@@ -177,40 +144,31 @@ module Umi
       end
     end
 
-    # Asynchronous fire-and-forget.
-    #
-    # @param message [Object] The message to send
-    # @return [self]
-    def cast(message)
-      @command_port << [:cast, message]
-      self
+    def respond_to_missing?(method, include_private = false)
+      true  # We forward everything
     end
 
-    # Request graceful shutdown.
-    #
-    # @param timeout [Integer] Milliseconds for worker to clean up
-    def shutdown(timeout: 5000) = @command_port << [:shutdown, timeout]
+    # Graceful shutdown.
+    def shutdown(timeout: 5000)
+      @command_port << [:shutdown, timeout]
+    end
 
     # Register for death notification.
     #
     # @param port [Ractor::Port] Port to receive :exited or :aborted
-    def monitor(port) = @ractor.monitor(port)
+    def monitor(port)
+      @ractor.monitor(port)
+    end
 
-    # Check if worker is still running.
-    #
-    # Note: This is approximate - it tracks known termination but can't
-    # detect crashes that haven't been observed yet. For reliable death
-    # detection, use monitor() instead.
-    def alive? = !@terminated
-
-    # Mark as terminated (called internally when death is detected).
-    def mark_terminated = @terminated = true
-
-    # The underlying Ractor (for advanced use).
-    attr_reader :ractor
+    # The underlying Ractor (for supervision).
+    def ractor
+      @ractor
+    end
 
     # The command port (for advanced use).
-    attr_reader :command_port
+    def command_port
+      @command_port
+    end
   end
 
   # Error raised when a worker call fails.

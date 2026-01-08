@@ -38,18 +38,29 @@ module Umi
   #     within_seconds: 5
   #   )
   #
+  # @example With Registry integration
+  #   registry = Umi::Registry.new
+  #   sup = Umi::Supervisor.start_link(
+  #     children: [
+  #       { id: :db, name: :database_pool, start: -> { DBPool.start_link } }
+  #     ],
+  #     registry: registry
+  #   )
+  #   # Now: registry.lookup(:database_pool) returns the worker's Ractor
+  #
   class Supervisor
     # Start a new supervisor.
     #
     # @param children [Array<Hash>] Child specifications
     # @param max_restarts [Integer] Max restarts before escalation (default 3)
     # @param within_seconds [Integer] Time window for restart counting (default 5)
+    # @param registry [Umi::Registry, nil] Optional registry for named children
     # @return [SupervisorHandle]
-    def self.start_link(children:, max_restarts: 3, within_seconds: 5)
+    def self.start_link(children:, max_restarts: 3, within_seconds: 5, registry: nil)
       setup_port = Ractor::Port.new
 
-      ractor = Ractor.new(setup_port, children, max_restarts, within_seconds) do |setup, child_specs, max_r, within_s|
-        sup = Supervisor.new(child_specs, max_r, within_s)
+      ractor = Ractor.new(setup_port, children, max_restarts, within_seconds, registry) do |setup, child_specs, max_r, within_s, reg|
+        sup = Supervisor.new(child_specs, max_r, within_s, reg)
         setup << sup.command_port
         sup.run
       end
@@ -58,10 +69,11 @@ module Umi
       SupervisorHandle.new(ractor, command_port)
     end
 
-    def initialize(child_specs, max_restarts, within_seconds)
+    def initialize(child_specs, max_restarts, within_seconds, registry = nil)
       @child_specs    = child_specs
       @max_restarts   = max_restarts
       @within_seconds = within_seconds
+      @registry       = registry
 
       @command_port  = Ractor::Port.new
       @children      = {}        # id → { handle:, spec:, monitor_port: }

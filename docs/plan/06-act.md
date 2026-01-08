@@ -495,6 +495,132 @@ See [etc.md](./etc.md) for the full pattern including implementation sketches.
 
 ---
 
+## Ruby-Idiomatic Call/Cast Convention
+
+_Added during implementation exploration — a potential Ruby-native approach to
+the call/cast distinction._
+
+### The Insight
+
+Ruby's existing method naming conventions map naturally to call vs cast semantics:
+
+| Method Pattern | Example | Semantics | Blocking? |
+|---------------|---------|-----------|-----------|
+| Normal method | `counter.current` | Need return value | **call** (sync) |
+| Bang method (`!`) | `counter.increment!` | Side effect, don't care about result | **cast** (async) |
+| Setter (`=`) | `counter.current = 5` | Assignment = side effect | **cast** (async) |
+| Getter (`[]`) | `registry[:key]` | Need return value | **call** (sync) |
+| Setter (`[]=`) | `registry[:key] = v` | Assignment | **cast** (async) |
+
+**No DSL needed** — the proxy can introspect the method name:
+- Ends in `!` → cast
+- Ends in `=` → cast
+- Otherwise → call
+
+### Why This Works
+
+The `!` suffix in Ruby conventionally means "run for side effects" or "dangerous
+variant." In the Worker context, it maps perfectly to "fire-and-forget."
+
+```ruby
+counter.increment!   # I don't need confirmation, just do it
+counter.current      # I need the value, must wait
+```
+
+### FIFO Ordering as Synchronization
+
+The single mailbox is FIFO. A sync call acts as a **synchronization barrier**:
+
+```ruby
+counter.increment!   # cast, queued
+counter.increment!   # cast, queued
+counter.current      # call, blocks — but AFTER processing the increments
+```
+
+When `current` returns, you know the increments have been processed. This is
+exactly how Erlang gen_server works — you get ordering guarantees from the
+single mailbox.
+
+### Timeout Semantics
+
+**For calls**: Timeout controls how long to wait for response.
+
+```ruby
+counter.current(timeout: 10)  # wait up to 10s for the value
+```
+
+**For casts**: Timeout could control backpressure — "fail if mailbox can't
+accept within N seconds."
+
+```ruby
+counter.increment!(timeout: 10)  # fail if queue is full for 10s
+```
+
+### Example Worker
+
+```ruby
+class Counter < Umi::Worker
+  def init(args)
+    @count = args[:start] || 0
+  end
+
+  # Sync - caller needs the value
+  def current = @count
+  def add(n) = @count += n
+
+  # Async - caller doesn't need confirmation
+  def increment! = @count += 1
+  def decrement! = @count -= 1
+
+  # Setter - naturally async
+  def current=(value)
+    @count = value
+  end
+end
+
+# Usage
+counter = Counter.new(start: 10)
+counter.increment!        # async, returns immediately
+counter.increment!        # async, queued
+value = counter.current   # sync, waits, gets value after increments processed
+counter.current = 100     # async setter
+```
+
+### Open Questions for This Approach
+
+1. **Automatic introspection vs explicit declaration** — Should the proxy
+   automatically detect `!`/`=` methods, or should workers explicitly declare
+   which methods are async? Automatic is magical; explicit is clearer.
+
+2. **Return values from cast** — Should `increment!` return `self` (for
+   chaining), `nil`, or the cast's internal ID (for later correlation)?
+
+3. **Error semantics** — If a cast causes an exception in the worker, how is
+   the caller notified? Options: (a) they're not — worker crashes and restarts,
+   (b) error is queued for next sync call, (c) dedicated error port.
+
+4. **Real-world validation needed** — This convention emerged from toy examples
+   (Counter). Real use cases may reveal that the call/cast distinction doesn't
+   map as cleanly to `!`/`=` as it appears. Need to test against actual systems.
+
+### The Deeper Question
+
+This approach assumes workers should "feel like normal Ruby objects with
+different failure semantics." But there's a tension:
+
+- **Pro-illusion**: Familiar API, low cognitive overhead, Ruby-idiomatic
+- **Pro-explicit**: Makes the Ractor boundary visible, forces thinking about
+  failure modes, matches Proctor's explicit timeout/tagged-tuple approach
+
+The right answer may depend on use case. Integration boundaries (Proctor-like)
+benefit from explicit protocols. Internal state servers might benefit from the
+OO illusion.
+
+**Framework implication**: We may be designing the wrong abstraction in a
+vacuum. The test is building real systems and seeing what patterns emerge.
+
+---
+
 ## Open Questions
 
 1. **Worker DSL**: Should there be a declarative way to define workers? The Port
