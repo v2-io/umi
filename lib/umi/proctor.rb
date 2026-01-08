@@ -128,6 +128,145 @@ module Umi
       proctor.result || proctor.join(timeout: 1.0)
     end
 
+    # Wait for output from any of the given proctors.
+    #
+    # This is the Ractor-native way to monitor multiple processes in parallel.
+    # Uses Ractor.select internally to multiplex across inbox ports without
+    # requiring threads.
+    #
+    # Returns [proctor, message] where message has the same format as #pop:
+    # - [:stdout, data] - stdout line from the proctor
+    # - [:stderr, data] - stderr line from the proctor
+    # - [:closed, result] - the proctor's process exited
+    #
+    # Returns nil on timeout.
+    #
+    # IMPORTANT: A proctor should be monitored via EITHER select OR pop methods,
+    # not both simultaneously. Mixing them may cause messages to be received
+    # by the wrong call.
+    #
+    # @param proctors [Array<Proctor>] Proctors to monitor
+    # @param timeout [Numeric, nil] Seconds to wait (nil = wait forever)
+    # @return [Array, nil] [proctor, message] or nil on timeout
+    #
+    # @example Monitor three worker processes
+    #   workers = 3.times.map { |i| Umi::Proctor.new("worker", i.to_s) }
+    #
+    #   until workers.all?(&:exited?)
+    #     case Umi::Proctor.select(*workers, timeout: 5)
+    #     in [worker, [:stdout, line]]
+    #       puts "Worker #{worker.pid}: #{line}"
+    #     in [worker, [:stderr, line]]
+    #       warn "Worker #{worker.pid} error: #{line}"
+    #     in [worker, [:closed, result]]
+    #       puts "Worker #{worker.pid} exited: #{result.exit_code}"
+    #     in nil
+    #       puts "No output for 5 seconds, checking health..."
+    #     end
+    #   end
+    #
+    # @example Collecting results from parallel tasks
+    #   tasks = urls.map { |url| Umi::Proctor.new("curl", "-s", url) }
+    #   results = {}
+    #
+    #   until tasks.all?(&:exited?)
+    #     case Umi::Proctor.select(*tasks)
+    #     in [task, [:stdout, data]]
+    #       results[task.pid] ||= ""
+    #       results[task.pid] << data
+    #     in [_, [:stderr, _]]
+    #       # ignore stderr
+    #     in [_, [:closed, _]]
+    #       # handled by all?(&:exited?)
+    #     end
+    #   end
+    #
+    def self.select(*proctors, timeout: nil)
+      raise ArgumentError, "no proctors given" if proctors.empty?
+
+      start_time = Time.now if timeout
+
+      loop do
+        live = proctors.reject(&:exited?)
+
+        # All dead - return first one's closed status
+        if live.empty?
+          p = proctors.first
+          return [p, [:closed, p.result]]
+        end
+
+        # Check buffers first - any proctor with pending output?
+        live.each do |p|
+          buffered = p.send(:extract_output_from_buffer)
+          return [p, buffered] if buffered
+        end
+
+        # Calculate remaining timeout
+        remaining = nil
+        if timeout
+          elapsed = Time.now - start_time
+          remaining = timeout - elapsed
+          return nil if remaining <= 0
+        end
+
+        # Build port -> proctor mapping
+        port_map = {}
+        ports = live.map do |p|
+          port = p.send(:inbox)
+          port_map[port] = p
+          port
+        end
+
+        # Add timer port if timeout specified
+        timer_port = nil
+        if remaining
+          timer_port = Ractor::Port.new
+          Thread.new(timer_port, remaining) do |port, t|
+            sleep(t)
+            begin
+              port.send(:timeout)
+            rescue StandardError
+              nil
+            end
+          end
+          ports << timer_port
+        end
+
+        source, msg = Ractor.select(*ports)
+
+        # Timeout
+        return nil if timer_port && source == timer_port
+
+        proctor = port_map[source]
+
+        case msg
+        in [:stdout, data]
+          return [proctor, [:stdout, data]]
+        in [:stderr, data]
+          return [proctor, [:stderr, data]]
+        in [:process_died, _pid, exit_code, sig]
+          proctor.send(:drain_remaining_to_buffer)
+          # Return buffered output first, defer death handling
+          buffered = proctor.send(:extract_output_from_buffer)
+          if buffered
+            proctor.send(:set_pending_death, exit_code, sig)
+            return [proctor, buffered]
+          end
+          proctor.send(:handle_death, exit_code, sig)
+          return [proctor, [:closed, proctor.result]]
+        in :exited | :aborted
+          # Watcher Ractor crashed - treat as closed
+          return [proctor, [:closed, proctor.result]]
+        in :timeout
+          return nil
+        else
+          # Internal message (stdout_closed, stderr_closed, etc.)
+          # Buffer it and continue the loop
+          proctor.send(:push_to_buffer, msg)
+        end
+      end
+    end
+
     # Create a new Proctor wrapping the given command.
     #
     # @param cmd [String] The command to run
@@ -620,6 +759,40 @@ module Umi
     end
 
     private
+
+    # Accessor for @inbox - used by Proctor.select
+    def inbox
+      @inbox
+    end
+
+    # Extract and remove first stdout/stderr message from buffer.
+    # Used by Proctor.select to check for pending output.
+    def extract_output_from_buffer
+      @message_buffer.each_with_index do |msg, idx|
+        case msg
+        in [:stdout, data]
+          @message_buffer.delete_at(idx)
+          return [:stdout, data]
+        in [:stderr, data]
+          @message_buffer.delete_at(idx)
+          return [:stderr, data]
+        else
+          # Not output, skip
+        end
+      end
+      nil
+    end
+
+    # Push a message to the buffer. Used by Proctor.select for internal messages.
+    def push_to_buffer(msg)
+      @message_buffer << msg
+    end
+
+    # Set pending death state. Used by Proctor.select when process dies
+    # but there's buffered output to return first.
+    def set_pending_death(exit_code, signal)
+      @pending_death = [exit_code, signal]
+    end
 
     def start_watcher
       cmd         = @cmd
