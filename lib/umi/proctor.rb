@@ -73,6 +73,10 @@ module Umi
     # Raised when the process has already exited
     class ProcessExited < StandardError; end
 
+    # Raised when the process could not be spawned (e.g., command not found,
+    # permission denied, too many open files)
+    class SpawnFailed < StandardError; end
+
     # Default timeouts (in seconds)
     DEFAULT_POP_TIMEOUT      = 2
     DEFAULT_POP_BANG_TIMEOUT = 120
@@ -642,21 +646,11 @@ module Umi
     def join(timeout: nil)
       return @result if @exited
 
-      # Check if pop already captured the death
+      # Check if pop/select already captured the death
       if @pending_death
         exit_code, sig = @pending_death
         @pending_death = nil
-        handle_death(exit_code, sig)
-        begin
-          @watcher << [:shutdown]
-        rescue
-          nil
-        end
-        begin
-          @watcher.value
-        rescue
-          nil
-        end
+        handle_death(exit_code, sig)  # This also shuts down watcher
         return @result
       end
 
@@ -666,13 +660,7 @@ module Umi
 
         case msg
         in [:process_died, _pid, exit_code, sig]
-          handle_death(exit_code, sig)
-          @watcher << [:shutdown]  # Direct send, bypass exited check
-          begin
-            @watcher.value
-          rescue
-            nil
-          end  # Wait for watcher to clean up
+          handle_death(exit_code, sig)  # This also shuts down watcher
           return @result
         in [:stdout, _] | [:stderr, _]
           # Discard remaining output
@@ -892,11 +880,22 @@ module Umi
       # Monitor the watcher for crashes
       @watcher.monitor(@inbox)
 
-      # Wait for started message
+      # Wait for started message (or abort if spawn failed)
       msg = @inbox.receive
       case msg
       in [:started, pid]
         @pid = pid
+      in :aborted | :exited
+        # Watcher crashed before spawning process (e.g., EMFILE, ENOENT, EACCES)
+        # Try to get the error from the watcher's return value
+        begin
+          @watcher.value
+        rescue Ractor::RemoteError => e
+          raise SpawnFailed, "Failed to spawn process: #{e.cause.class} - #{e.cause.message}"
+        rescue StandardError => e
+          raise SpawnFailed, "Failed to spawn process: #{e.class} - #{e.message}"
+        end
+        raise SpawnFailed, "Failed to spawn process (watcher aborted)"
       end
     end
 
@@ -1060,6 +1059,26 @@ module Umi
       )
 
       @exit_callbacks.each { |cb| cb.call(@result) }
+
+      # Shut down the watcher Ractor to release file descriptors.
+      # This is critical - without it, pipes leak until EMFILE.
+      shutdown_watcher
+    end
+
+    def shutdown_watcher
+      return unless @watcher
+
+      begin
+        @watcher << [:shutdown]
+      rescue StandardError
+        # Watcher may already be dead
+      end
+
+      begin
+        @watcher.value
+      rescue StandardError
+        # Ignore errors from watcher cleanup
+      end
     end
   end
 end

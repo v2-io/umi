@@ -482,6 +482,40 @@ results << test("select with timeout: 0 returns immediately if no data") do
 end
 
 # =============================================================================
+# Resource cleanup (regression test for file descriptor leak)
+# =============================================================================
+puts "\n--- Resource cleanup ---"
+
+results << test("select properly releases file descriptors after process exit") do
+  # This tests the fix for the EMFILE leak: when select sees [:closed, result],
+  # the watcher Ractor must be shut down to release pipe file descriptors.
+  #
+  # We run multiple batches of proctors through select and verify no FD leak.
+  # If watchers weren't shut down, we'd eventually hit EMFILE.
+
+  initial_fd_count = Dir.glob("/dev/fd/*").size rescue 0
+
+  5.times do |batch|
+    proctors = 10.times.map { |i| Umi::Proctor.new("echo", "batch#{batch}-#{i}") }
+
+    until proctors.all?(&:exited?)
+      result = Umi::Proctor.select(*proctors, timeout: 5)
+      break if result.nil?
+      # Just drain - we don't care about output
+    end
+  end
+
+  # Give a moment for cleanup
+  sleep 0.1
+
+  final_fd_count = Dir.glob("/dev/fd/*").size rescue 0
+
+  # Should not have leaked significant FDs (allow some variance for Ruby internals)
+  fd_increase = final_fd_count - initial_fd_count
+  assert fd_increase < 20, "File descriptor leak detected: started with #{initial_fd_count}, ended with #{final_fd_count} (increase of #{fd_increase})"
+end
+
+# =============================================================================
 # Summary
 # =============================================================================
 puts
