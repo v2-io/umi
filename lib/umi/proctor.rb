@@ -108,6 +108,13 @@ module Umi
 
     attr_reader :pid
 
+    # Creates a finalizer proc that shuts down the watcher when the Proctor is GC'd.
+    # This is a class method to avoid capturing `self` in the proc's closure.
+    # @api private
+    def self.invoke_finalizer(watcher)
+      ->(_id) { watcher << [:shutdown] rescue nil }
+    end
+
     # Open a Proctor, yield it, and ensure cleanup.
     #
     # @param cmd [String] The command to run
@@ -223,23 +230,23 @@ module Umi
 
         # Add timer port if timeout specified
         timer_port = nil
+        timer_thread = nil
         if remaining
           timer_port = Ractor::Port.new
-          Thread.new(timer_port, remaining) do |port, t|
+          timer_thread = Thread.new(timer_port, remaining) do |port, t|
             sleep(t)
-            begin
-              port.send(:timeout)
-            rescue StandardError
-              nil
-            end
+            port.send(:timeout) rescue nil
           end
           ports << timer_port
         end
 
         source, msg = Ractor.select(*ports)
 
-        # Timeout
+        # Timeout - timer thread has already exited naturally
         return nil if timer_port && source == timer_port
+
+        # Real message arrived - kill timer thread to prevent accumulation
+        timer_thread&.kill
 
         proctor = port_map[source]
 
@@ -804,12 +811,19 @@ module Umi
 
         inbox.send([:started, pid])
 
+        # Flag set before closing IO handles during shutdown. Threads check this
+        # to distinguish deliberate shutdown from unexpected IOError.
+        shutting_down = false
+
         # Threads for async I/O
         stdout_thread = Thread.new do
           while line = stdout.gets
             inbox.send([:stdout, line])
           end
           inbox.send([:stdout_closed])
+        rescue IOError => e
+          # Only suppress if we're shutting down AND it's the expected error
+          raise unless shutting_down && e.message.include?("closed in another thread")
         end
 
         stderr_thread = Thread.new do
@@ -826,6 +840,9 @@ module Umi
             stderr.read  # Consume and discard
           end
           inbox.send([:stderr_closed])
+        rescue IOError => e
+          # Only suppress if we're shutting down AND it's the expected error
+          raise unless shutting_down && e.message.include?("closed in another thread")
         end
 
         death_thread = Thread.new do
@@ -869,7 +886,14 @@ module Umi
           end
         end
 
-        # Cleanup
+        # Cleanup: Signal shutdown, then close IO handles to unblock threads.
+        # This is critical when child processes inherit file descriptors -
+        # killing the main process doesn't close the pipes if children hold them.
+        shutting_down = true
+        [stdin, stdout, stderr].each do |io|
+          io.close rescue nil
+        end
+
         stdout_thread.join
         stderr_thread.join
         death_thread.join
@@ -897,6 +921,11 @@ module Umi
         end
         raise SpawnFailed, "Failed to spawn process (watcher aborted)"
       end
+
+      # Safety net: if Proctor is GC'd without explicit cleanup, try to shutdown
+      # the watcher. This prevents resource leaks from abandoned Proctors.
+      # Use class method to create finalizer proc outside instance context.
+      ObjectSpace.define_finalizer(self, self.class.invoke_finalizer(@watcher))
     end
 
     def send_command(*cmd)
@@ -915,22 +944,21 @@ module Umi
         # Non-blocking check - just return nil if nothing available
         # Unfortunately Ractor.select doesn't support non-blocking, so use tiny timer
         timer_port = Ractor::Port.new
-        Thread.new { sleep(0.001)
- timer_port.send(:timeout) }
+        timer_thread = Thread.new { sleep(0.001); timer_port.send(:timeout) }
 
         source, msg = Ractor.select(@inbox, timer_port)
-        source == timer_port ? nil : msg
+        if source == timer_port
+          nil
+        else
+          timer_thread.kill  # Clean up timer thread since real message arrived
+          msg
+        end
       else
-        # Use timer Ractor pattern
+        # Use timer thread pattern for timeout
         timer_port = Ractor::Port.new
-        # Use Thread instead of Ractor to avoid accumulating Ractors
-        Thread.new(timer_port, timeout) do |port, t|
+        timer_thread = Thread.new(timer_port, timeout) do |port, t|
           sleep(t)
-          begin
-            port.send(:timeout)
-          rescue
-            nil
-          end
+          port.send(:timeout) rescue nil
         end
 
         source, msg = Ractor.select(@inbox, timer_port)
@@ -938,6 +966,7 @@ module Umi
         if source == timer_port
           :timeout
         else
+          timer_thread.kill  # Clean up timer thread since real message arrived
           msg
         end
       end
@@ -1023,26 +1052,27 @@ module Umi
         @inbox.receive
       elsif timeout <= 0
         timer_port = Ractor::Port.new
-        Thread.new { sleep(0.001)
- begin
-                                     timer_port.send(:timeout)
-                                   rescue
-                                     nil
-                                   end }
+        timer_thread = Thread.new { sleep(0.001); timer_port.send(:timeout) rescue nil }
         source, msg = Ractor.select(@inbox, timer_port)
-        source == timer_port ? nil : msg
+        if source == timer_port
+          nil
+        else
+          timer_thread.kill  # Clean up timer thread since real message arrived
+          msg
+        end
       else
         timer_port = Ractor::Port.new
-        Thread.new(timer_port, timeout) do |port, t|
+        timer_thread = Thread.new(timer_port, timeout) do |port, t|
           sleep(t)
-          begin
-            port.send(:timeout)
-          rescue
-            nil
-          end
+          port.send(:timeout) rescue nil
         end
         source, msg = Ractor.select(@inbox, timer_port)
-        source == timer_port ? :timeout : msg
+        if source == timer_port
+          :timeout
+        else
+          timer_thread.kill  # Clean up timer thread since real message arrived
+          msg
+        end
       end
     end
 
