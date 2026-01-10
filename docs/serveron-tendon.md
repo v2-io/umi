@@ -615,5 +615,165 @@ thoughts, not firm commitments:
 
 ---
 
+## Addendum: Lessons from Background Job Systems
+
+*Reflections prompted by Ben Sheldon's "Reflections on GoodJob for Solid Queue"
+(October 2023), read in the context of Umi's design.*
+
+Background job systems like GoodJob and Solid Queue solve a subset of the
+problems Umi addresses—but they've been battle-tested in production Ruby
+environments. Their hard-won insights are worth incorporating.
+
+### SIGKILL Safety as Default Assumption
+
+Sheldon prioritizes recovering from abrupt shutdowns using mechanisms that
+auto-release on disconnection (Advisory Locks), avoiding timeout-based recovery
+that creates retry latency.
+
+**For Umi**: Design for ungraceful death as the *normal* case, not the edge
+case. The Proctor fix (closing IO handles before joining threads) embodies this
+—when child processes inherit file descriptors, the "clean" shutdown path hangs.
+The fix assumes the messy path.
+
+Every Serveron concern in section 4 (Termination / Death) should be re-examined
+through this lens: "What if I'm SIGKILLed mid-operation?"
+
+### The Nuance of "Why It Died"
+
+Sheldon identifies that teams need to distinguish between:
+- Retried jobs (transient failure, worth another try)
+- Stopped retries (gave up after N attempts)
+- Explicit discards (intentional, "this job is invalid")
+- Interrupted processes (SIGKILL, external termination)
+- Unhandled errors (bugs)
+
+Each routes differently to exception trackers, metrics, and operator attention.
+
+**For Umi**: The current `:permanent`/`:temporary`/`:transient` restart types
+capture *policy* but not *cause*. A Serveron's death notification might need to
+distinguish:
+
+| Death Type | Meaning | Typical Response |
+|------------|---------|------------------|
+| `:normal` | Clean exit, work complete | Don't restart (unless permanent) |
+| `:error` | Unhandled exception | Restart, notify exception tracker |
+| `:shutdown` | Graceful stop requested | Don't restart |
+| `:killed` | External termination (SIGKILL) | Restart, maybe investigate |
+| `:timeout` | Watchdog killed it | Restart, definitely investigate |
+
+This is richer than `:exited`/`:aborted` from `Ractor#monitor`. The Tendon might
+need to infer or track additional context.
+
+### Process Harnesses: The Shared Infrastructure
+
+> "Queue backends involve substantial operational overlap with web servers:
+> signal handling, timeouts, health checks, and scaling instrumentation across
+> platforms like Kubernetes, systemd, and Heroku."
+
+Sheldon sees this as a common layer that shouldn't be reimplemented per-system.
+
+**For Umi**: This validates the Coordinator's role. The signal handling,
+shutdown sequencing, health checks, and external supervision integration in
+`ini.md` aren't specific to any application—they're the *harness* that any
+long-running Ruby process needs.
+
+Umi's value proposition might be: "The process harness layer that GoodJob,
+Solid Queue, and your custom services can all build on."
+
+### Organizing by Promise, Not Purpose
+
+Sheldon advocates organizing queues by maximum latency SLOs (`latency_15s`,
+`latency_15m`, `latency_8h`) rather than functional purpose (`email_queue`,
+`payment_queue`).
+
+The insight: the **promise** (latency bound, failure tolerance) should be the
+organizing principle, not the **purpose** (what work is done).
+
+**For Umi**: This suggests supervision trees might be organized not by what
+serverons *do* but by their **operational characteristics**:
+
+```
+root_sup
+├── critical_sup (intensity=0, latency_ms)     # Payment processing
+│   └── payment_worker
+├── standard_sup (intensity=3, latency_sec)    # User requests
+│   ├── api_handler
+│   └── session_manager
+└── background_sup (intensity=10, latency_min) # Batch work
+    ├── report_generator
+    └── cleanup_worker
+```
+
+A payment worker and an API handler might be functionally unrelated, but if they
+have the same latency requirements and failure tolerance, they might belong
+under the same supervisor configuration.
+
+This also connects to the Serveron's "Contract" concern: "What do I promise?"
+isn't just documentation—it's a classification that affects supervision strategy.
+
+### Identity vs Routing
+
+Sheldon advocates using labels for identity and reserving queue names for
+routing/SLOs. Don't overload one concept with both meanings.
+
+**For Umi**: We already separate these—Registry names are for identity,
+supervision tree position is for restart policy. But it's worth being explicit:
+
+- **Registry name**: "Who am I?" — survives restarts, how clients find me
+- **Supervisor placement**: "What happens when I die?" — restart policy, blast radius
+- **Labels/metadata**: "What kind of thing am I?" — for introspection, filtering
+
+### Performance Philosophy: Knowing Your Scale
+
+> "GoodJob targets small-to-medium projects, prioritizing operational simplicity
+> over raw throughput."
+
+**For Umi**: This is the right positioning. Umi isn't competing with BEAM for
+massive scale—it's bringing resilience patterns to Ruby projects that currently
+have *none*. A Ruby shop with 10 background workers doesn't need BEAM's million-
+process capacity. They need: "When one worker hangs, the others keep running."
+
+The goal is making OTP patterns *accessible*, not making Ruby as fast as Erlang.
+
+### The Test Is Real Systems
+
+Sheldon emphasizes that responsive iteration from real usage is essential. The
+patterns that survive are the ones that solve actual problems.
+
+**For Umi**: The plan documents are theoretical. The "Open Questions" sections
+are honest about uncertainty. The real test is building systems—like the
+`worker_pickaxe` that prompted investigating Proctor's thread cleanup—and
+discovering what breaks, what's missing, and what patterns emerge.
+
+### Where Does Umi End?
+
+This reflection raises a scoping question: Should Umi include a job queue
+abstraction, or is that a separate layer?
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Application Layer                                                          │
+│  (GoodJob, Solid Queue, your app)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Job Queue Abstraction (maybe)                                              │
+│  (Enqueue, dequeue, retry, scheduling)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Umi Layer                                                                  │
+│  (Serverons, Tendons, Registry, Coordinator, Proctor)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Ruby 4.0 Primitives                                                        │
+│  (Ractor, Port, monitor, Thread, Fiber)                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+GoodJob and Solid Queue are complete job queue systems. Umi might be the
+*process harness* layer beneath them—or might include enough job-queue-like
+functionality (scheduled work, retry policies, persistence) to obviate separate
+systems for some use cases.
+
+This is an open question. The answer will emerge from building real systems.
+
+---
+
 *This document captures design thinking from January 2026. The concepts will
 evolve as we build real systems and discover what patterns emerge.*
