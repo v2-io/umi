@@ -56,6 +56,25 @@ A **Tendon**:
 The anatomical pun fits the body/organ metaphor—and carries a bit of Ruby
 community absurdist humor.
 
+### Why "Exeron"?
+
+The current `Umi::Proctor` wraps external OS processes, making them citizens of
+Ractor-land. "Proctor" was a working name; "Exeron" fits the naming scheme:
+
+- **Exo-** (Greek): outside, external
+- **-on** suffix: the fundamental particle pattern
+
+An **Exeron** is the particle of externality—the bridge between Unix process
+world and Serveron world. It handles I/O, lifecycle, and death detection for
+things that live outside Ruby's memory space.
+
+The trio:
+- **Serveron** — the fundamental server unit
+- **Tendon** — the supervisor/connector
+- **Exeron** — the external process wrapper
+
+*Decision captured January 2026. Code rename from Proctor → Exeron pending.*
+
 ---
 
 ## The Holon Concept
@@ -340,6 +359,90 @@ of most application failures. A running process with every Ractor waiting
 for something that will never come. From the user's perspective: failure.
 
 Every blocking operation needs a timeout. **Hope is not a design method.**
+
+### Timeout as Control Flow, Not Exception
+
+A critical design principle: **timeout is a normal outcome, not an error**.
+
+In long-lived interconnected systems, timeouts aren't exceptional—they're just
+slightly less common than the sunny-day path. The API should reflect this:
+
+```ruby
+# Timeout is a peer of success, not a rescue clause
+case serveron.call(:get_data, timeout: 5.0)
+in [:ok, data]  then process(data)
+in nil          then handle_timeout()   # Normal control flow
+in [:error, r]  then handle_error(r)
+end
+```
+
+**Indefinite blocking should be awkward, not default.** If code blocks forever,
+it should look like a deliberate choice:
+
+```ruby
+# Clearly deliberate — developer owns this decision
+result = serveron.call(:slow_thing, timeout: :forever)
+
+# NOT this — accidentally blocking forever
+result = serveron.call(:slow_thing)  # Should have reasonable default timeout
+```
+
+Even when "there's nothing I can do" on timeout, there's always *something*:
+
+```ruby
+loop do
+  case serveron.call(:work, timeout: 30)
+  in [:ok, result]
+    process(result)
+  in nil
+    log.warn "Work call taking longer than expected..."
+    retries += 1
+    if retries > 3
+      # Acknowledge the bad state clearly
+      raise "Cannot proceed: work call consistently timing out"
+    end
+    # Otherwise loop and try again — we're still alive, still trying
+  end
+end
+```
+
+### Timeouts Give You Heartbeats for Free
+
+When every operation has a bounded timeout, you naturally get:
+
+**Heartbeats**: The timeout-and-retry loop IS a heartbeat. Each iteration is a
+chance to say "I'm still here, still trying." A serveron that's stuck forever
+can't report anything. One that times out can log, update metrics, notify.
+
+**Health checks**: Between timeout iterations, you have natural checkpoints:
+
+```ruby
+loop do
+  case dependency.call(:health_check, timeout: 5.0)
+  in [:ok, :healthy]
+    @circuit_breaker.record_success
+  in [:ok, :degraded]
+    @circuit_breaker.record_degraded
+    log.warn "Dependency reporting degraded"
+  in nil
+    @circuit_breaker.record_timeout
+    log.error "Dependency not responding"
+  end
+
+  sleep(health_check_interval)
+end
+```
+
+**Graceful degradation**: Timeouts let you notice problems *before* they cascade.
+A serveron waiting on a slow dependency can trip a circuit breaker, shed load,
+or enter degraded mode—but only if it's not blocked forever.
+
+**Supervision visibility**: A Tendon can't help a serveron that's blocked forever.
+But one that times out and crashes with a clear message? The Tendon restarts it,
+operators see what happened, and the system continues.
+
+The principle: **every wait is an opportunity to notice, report, and adapt.**
+Infinite waits are infinite blindness.
 
 ---
 
@@ -759,7 +862,7 @@ abstraction, or is that a separate layer?
 │  (Enqueue, dequeue, retry, scheduling)                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Umi Layer                                                                  │
-│  (Serverons, Tendons, Registry, Coordinator, Proctor)                      │
+│  (Serverons, Tendons, Registry, Coordinator, Exeron)                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Ruby 4.0 Primitives                                                        │
 │  (Ractor, Port, monitor, Thread, Fiber)                                    │
@@ -772,6 +875,18 @@ functionality (scheduled work, retry policies, persistence) to obviate separate
 systems for some use cases.
 
 This is an open question. The answer will emerge from building real systems.
+
+---
+
+## References
+
+- `ruby-4x-direction.md` — Research on Ruby maintainer vision for Ractors.
+  Confirms our patterns (timer threads, per-registration ports, userland lifecycle)
+  are the intended approaches, not workarounds for planned features.
+- `ruby-src-copies/ruby-ractor.md` — Ruby 4.0 Ractor documentation
+- `ruby-src-copies/ruby-box.md` — Ruby Box (in-process isolation) documentation
+- *Release It!* by Michael Nygard — The stability/longevity problems we're solving
+- *Designing Elixir Systems with OTP* — One solution approach (not ours to copy)
 
 ---
 
